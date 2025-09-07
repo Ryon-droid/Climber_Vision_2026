@@ -1,0 +1,21 @@
+{
+    "configurations": [
+        {
+            "name": "Climber_Vision",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/io/serial/include",
+                "${workspaceFolder}/io/hikrobot/include",
+                "/usr/include/opencv4",
+                "/usr/include/eigen3",
+                "/opt/intel/openvino_2024.6.0/runtime/include/",
+                "/opt/ros/humble/include/**"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
