@@ -122,24 +122,24 @@ io::Command Aimer::aim(
   return {true, false, yaw, pitch};
 }
 
-io::Command Aimer::aim(
-  std::list<Target> targets, std::chrono::steady_clock::time_point timestamp, double bullet_speed,
-  io::ShootMode shoot_mode, bool to_now)
-{
-  double yaw_offset;
-  if (shoot_mode == io::left_shoot && left_yaw_offset_.has_value()) {
-    yaw_offset = left_yaw_offset_.value();
-  } else if (shoot_mode == io::right_shoot && right_yaw_offset_.has_value()) {
-    yaw_offset = right_yaw_offset_.value();
-  } else {
-    yaw_offset = yaw_offset_;
-  }
+// io::Command Aimer::aim(
+//   std::list<Target> targets, std::chrono::steady_clock::time_point timestamp, double bullet_speed,
+//   io::ShootMode shoot_mode, bool to_now)
+// {
+//   double yaw_offset;
+//   if (shoot_mode == io::left_shoot && left_yaw_offset_.has_value()) {
+//     yaw_offset = left_yaw_offset_.value();
+//   } else if (shoot_mode == io::right_shoot && right_yaw_offset_.has_value()) {
+//     yaw_offset = right_yaw_offset_.value();
+//   } else {
+//     yaw_offset = yaw_offset_;
+//   }
 
-  auto command = aim(targets, timestamp, bullet_speed, to_now);
-  command.yaw = command.yaw - yaw_offset_ + yaw_offset;
+//   auto command = aim(targets, timestamp, bullet_speed, to_now);
+//   command.yaw = command.yaw - yaw_offset_ + yaw_offset;
 
-  return command;
-}
+//   return command;
+// }
 
 AimPoint Aimer::choose_aim_point(const Target & target)
 {

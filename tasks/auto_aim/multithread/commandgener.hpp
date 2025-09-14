@@ -3,10 +3,10 @@
 
 #include <optional>
 
-#include "io/cboard.hpp"
+// #include "io/cboard.hpp"
 #include "tasks/auto_aim/shooter.hpp"
 #include "tasks/auto_aim/tracker.hpp"
-#include "tasks/omniperception/decider.hpp"
+// #include "tasks/omniperception/decider.hpp"
 #include "tools/plotter.hpp"
 
 namespace auto_aim
@@ -18,7 +18,7 @@ class CommandGener
 {
 public:
   CommandGener(
-    auto_aim::Shooter & shooter, auto_aim::Aimer & aimer, io::CBoard & cboard,
+    auto_aim::Shooter & shooter, auto_aim::Aimer & aimer, //io::CBoard & cboard,
     tools::Plotter & plotter, bool debug = false);
 
   ~CommandGener();
@@ -37,7 +37,7 @@ private:
     Eigen::Vector3d gimbal_pos;
   };
 
-  io::CBoard & cboard_;
+  // io::CBoard & cboard_;
   auto_aim::Shooter & shooter_;
   auto_aim::Aimer & aimer_;
   tools::Plotter & plotter_;

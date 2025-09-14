@@ -5,7 +5,7 @@
 #include <chrono>
 #include <list>
 
-#include "io/cboard.hpp"
+// #include "io/cboard.hpp"
 #include "io/command.hpp"
 #include "target.hpp"
 
@@ -27,9 +27,9 @@ public:
     std::list<Target> targets, std::chrono::steady_clock::time_point timestamp, double bullet_speed,
     bool to_now = true);
 
-  io::Command aim(
-    std::list<Target> targets, std::chrono::steady_clock::time_point timestamp, double bullet_speed,
-    io::ShootMode shoot_mode, bool to_now = true);
+  // io::Command aim(
+  //   std::list<Target> targets, std::chrono::steady_clock::time_point timestamp, double bullet_speed,
+  //   io::ShootMode shoot_mode, bool to_now = true);
 
 private:
   double yaw_offset_;

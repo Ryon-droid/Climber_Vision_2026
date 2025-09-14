@@ -23,7 +23,7 @@ include_directories(${PROJECT_SOURCE_DIR})
 add_subdirectory(tools)
 add_subdirectory(io)
 add_subdirectory(tasks/auto_aim)
-add_subdirectory(tasks/auto_buff)
+# add_subdirectory(tasks/auto_buff)
 # add_subdirectory(tasks/omniperception)
 
 ####################src###################
@@ -33,7 +33,7 @@ add_subdirectory(tasks/auto_buff)
 
 
 ##################tests##################
-
+add_executable(auto_aim_test test/auto_aim_test.cpp)
 
 # # 检查 ROS 环境
 # find_package(ament_cmake QUIET)
