@@ -11,7 +11,7 @@
 namespace auto_aim
 {
 YOLO11::YOLO11(const std::string & config_path, bool debug)
-: debug_(debug), detector_(config_path, false)
+: debug_(debug)//, detector_(config_path, false)
 {
   auto yaml = YAML::LoadFile(config_path);
 

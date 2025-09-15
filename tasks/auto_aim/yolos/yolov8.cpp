@@ -8,55 +8,55 @@
 #include <filesystem>
 #include <random>
 
-#include "tasks/auto_aim/classifier.hpp"
+// #include "tasks/auto_aim/classifier.hpp"
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
 
 namespace auto_aim
 {
-YOLOV8::YOLOV8(const std::string & config_path, bool debug)
-: classifier_(config_path), detector_(config_path), debug_(debug)
-{
-  auto yaml = YAML::LoadFile(config_path);
+  YOLOV8::YOLOV8(const std::string &config_path, bool debug)
+  : debug_(debug),classifier_(config_path)//, detector_(config_path)
+  {
+    auto yaml = YAML::LoadFile(config_path);
 
-  model_path_ = yaml["yolov8_model_path"].as<std::string>();
-  device_ = yaml["device"].as<std::string>();
-  binary_threshold_ = yaml["threshold"].as<double>();
-  min_confidence_ = yaml["min_confidence"].as<double>();
-  int x = 0, y = 0, width = 0, height = 0;
-  x = yaml["roi"]["x"].as<int>();
-  y = yaml["roi"]["y"].as<int>();
-  width = yaml["roi"]["width"].as<int>();
-  height = yaml["roi"]["height"].as<int>();
-  use_roi_ = yaml["use_roi"].as<bool>();
-  roi_ = cv::Rect(x, y, width, height);
-  offset_ = cv::Point2f(x, y);
+    model_path_ = yaml["yolov8_model_path"].as<std::string>();
+    device_ = yaml["device"].as<std::string>();
+    binary_threshold_ = yaml["threshold"].as<double>();
+    min_confidence_ = yaml["min_confidence"].as<double>();
+    int x = 0, y = 0, width = 0, height = 0;
+    x = yaml["roi"]["x"].as<int>();
+    y = yaml["roi"]["y"].as<int>();
+    width = yaml["roi"]["width"].as<int>();
+    height = yaml["roi"]["height"].as<int>();
+    use_roi_ = yaml["use_roi"].as<bool>();
+    roi_ = cv::Rect(x, y, width, height);
+    offset_ = cv::Point2f(x, y);
 
-  save_path_ = "imgs";
-  std::filesystem::create_directory(save_path_);
+    save_path_ = "imgs";
+    std::filesystem::create_directory(save_path_);
 
-  auto model = core_.read_model(model_path_);
-  ov::preprocess::PrePostProcessor ppp(model);
-  auto & input = ppp.input();
+    auto model = core_.read_model(model_path_);
+    ov::preprocess::PrePostProcessor ppp(model);
+    auto &input = ppp.input();
 
-  input.tensor()
-    .set_element_type(ov::element::u8)
-    .set_shape({1, 416, 416, 3})
-    .set_layout("NHWC")
-    .set_color_format(ov::preprocess::ColorFormat::BGR);
+    input.tensor()
+        .set_element_type(ov::element::u8)
+        .set_shape({1, 416, 416, 3})
+        .set_layout("NHWC")
+        .set_color_format(ov::preprocess::ColorFormat::BGR);
 
-  input.model().set_layout("NCHW");
+    input.model().set_layout("NCHW");
 
-  input.preprocess()
-    .convert_element_type(ov::element::f32)
-    .convert_color(ov::preprocess::ColorFormat::RGB)
-    .scale(255.0);
+    input.preprocess()
+        .convert_element_type(ov::element::f32)
+        .convert_color(ov::preprocess::ColorFormat::RGB)
+        .scale(255.0);
 
-  // TODO: ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY)
-  model = ppp.build();
-  compiled_model_ = core_.compile_model(
-    model, device_, ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
-}
+    // TODO: ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY)
+    model = ppp.build();
+    compiled_model_ = core_.compile_model(
+        model, device_, ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
+  }
 
 std::list<Armor> YOLOV8::detect(const cv::Mat & raw_img, int frame_count)
 {

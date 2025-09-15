@@ -35,7 +35,7 @@ endif()
 #   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_HOST_SYSTEM_PROCESSOR}!")
 # endif()
 
-target_link_libraries(io MvCameraControl MVSDK usb-1.0 yaml-cpp serial)
+target_link_libraries(io MvCameraControl usb-1.0 yaml-cpp serial)
 
 # ################## 检查 ROS 环境 ##################
 # find_package(ament_cmake QUIET)

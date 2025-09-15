@@ -9,7 +9,7 @@
 
 #include "tasks/auto_aim/armor.hpp"
 #include "tasks/auto_aim/classifier.hpp"
-#include "tasks/auto_aim/detector.hpp"
+// #include "tasks/auto_aim/detector.hpp"
 #include "tasks/auto_aim/yolo.hpp"
 
 namespace auto_aim
@@ -27,7 +27,7 @@ public:
 
 private:
   Classifier classifier_;
-  Detector detector_;
+  // Detector detector_;
 
   std::string device_, model_path_;
   std::string save_path_, debug_path_;

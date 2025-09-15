@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "tasks/auto_aim/armor.hpp"
-#include "tasks/auto_aim/detector.hpp"
+// #include "tasks/auto_aim/detector.hpp"
 #include "tasks/auto_aim/yolo.hpp"
 
 namespace auto_aim
@@ -40,7 +40,7 @@ private:
   cv::Point2f offset_;
   cv::Mat tmp_img_;
 
-  Detector detector_;
+  // Detector detector_;
 
   bool check_name(const Armor & armor) const;
   bool check_type(const Armor & armor) const;

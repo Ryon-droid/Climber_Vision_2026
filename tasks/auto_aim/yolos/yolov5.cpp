@@ -11,7 +11,7 @@
 namespace auto_aim
 {
 YOLOV5::YOLOV5(const std::string & config_path, bool debug)
-: debug_(debug), detector_(config_path, false)
+: debug_(debug)//, detector_(config_path, false)
 {
   auto yaml = YAML::LoadFile(config_path);
 
@@ -181,7 +181,7 @@ std::list<Armor> YOLOV5::parse(
       continue;
     }
     // 使用传统方法二次矫正角点
-    if (use_traditional_) detector_.detect(*it, bgr_img);
+    // if (use_traditional_) detector_.detect(*it, bgr_img);
 
     it->center_norm = get_center_norm(bgr_img, it->center);
     ++it;
