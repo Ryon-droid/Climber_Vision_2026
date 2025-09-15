@@ -98,11 +98,11 @@ int main(int argc, char *argv[])
         /// 调试输出
 
         auto finish = std::chrono::steady_clock::now();
-        tools::logger()->info(
-            "[{}] yolo: {:.1f}ms, tracker: {:.1f}ms, aimer: {:.1f}ms", t0,
-            tools::delta_time(tracker_start, yolo_start) * 1e3,
-            tools::delta_time(aimer_start, tracker_start) * 1e3,
-            tools::delta_time(finish, aimer_start) * 1e3);
+        // tools::logger()->info(
+        //     "[{}] yolo: {:.1f}ms, tracker: {:.1f}ms, aimer: {:.1f}ms", t0,
+        //     tools::delta_time(tracker_start, yolo_start) * 1e3,
+        //     tools::delta_time(aimer_start, tracker_start) * 1e3,
+        //     tools::delta_time(finish, aimer_start) * 1e3);
 
         // tools::draw_text(
         //     img,
