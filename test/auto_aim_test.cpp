@@ -49,9 +49,20 @@ int main(int argc, char *argv[])
             break;
 
         auto armors = yolo.detect(img);
+        cv::Mat draw_img = img.clone();
+        for(const auto & armor : armors){
+            std::vector<cv::Point> point(4);
+            for(int i=0;i<4;i++){
+                point[i] = cv::Point(static_cast<int>(armor.points[i].x),static_cast<int>(armor.points[i].y));
+            }
+            cv::polylines(draw_img, std::vector<std::vector<cv::Point>>{point}, true, cv::Scalar(0,255,0),2);
+        
+            tools::draw_text(draw_img, fmt::format("ID:{} conf{:.2f}",armor.name,armor.confidence), armor.center);
+        }
 
-        cv::resize(img, img, {}, 0.5, 0.5); // 显示时缩小图片尺寸
-        cv::imshow("reprojection", img);
+        cv::resize(draw_img, draw_img, {}, 0.5, 0.5); // 显示时缩小图片尺寸
+        cv::imshow("reprojection", draw_img);
+
         auto key = cv::waitKey(30);
         if (key == 'q')
             break;
