@@ -1,0 +1,111 @@
+enemy_color: "red"
+# enemy_color: "blue"
+
+# 机器人类型配置（hero或其他）
+robot_type: "hero"  # hero为英雄机器人，其他为普通机器人
+
+#####-----神经网络参数-----#####
+yolo_name: yolov5
+classify_model: assets/tiny_resnet.onnx
+yolo11_model_path: assets/yolo11.xml
+yolov8_model_path: assets/yolov8.xml
+yolov5_model_path: assets/yolov5.xml
+device: GPU
+min_confidence: 0.65 #0.8 #原检测阈值
+use_traditional: false
+
+#####-----ROI-----#####
+roi: 
+  x: 420
+  y: 50
+  width: 600
+  height: 600
+
+use_roi: false
+
+#####-----传统方法参数-----#####
+threshold: 150
+max_angle_error: 45 # degree
+min_lightbar_ratio: 1.5
+max_lightbar_ratio: 20
+min_lightbar_length: 8
+min_armor_ratio: 1
+max_armor_ratio: 5
+max_side_ratio: 1.5
+max_rectangular_error: 25 # degree
+# min_confidence: 0.8
+
+#####-----tracker参数-----#####
+min_detect_count: 5               #追踪检测次数阈值
+max_temp_lost_count: 15           #装甲板最大丢失帧数
+outpost_max_temp_lost_count: 75   #前哨站最大丢失帧数
+
+#####-----aimer参数-----#####
+yaw_offset: -2.5 # degree -2.5
+pitch_offset: 0 # degree 2
+comming_angle: 0 # degree
+leaving_angle: 0 # degree
+decision_speed: 8 # rad/s       #小陀罗判定速度 快、慢
+decision_spin: 2 # rad/s       #小陀罗模式判定
+high_speed_delay_time: 0.0 # s   0.03
+low_speed_delay_time: 0.0 # s  0.015
+
+#####-----shooter参数-----#####
+first_tolerance: 3 # 近距离射击容差，degree
+second_tolerance: 1 # 远距离射击容差，degree
+judge_distance: 3 #距离判断阈值
+auto_fire: true # 是否由自瞄控制射击
+fire_time_min_ratio: 0.9 # 小陀螺模式：飞行时间最小提前系数
+fire_time_max_ratio: 1.1 # 小陀螺模式：飞行时间最大提前系数
+exit_spinning_threshold: 2.0 # 退出小陀螺模式阈值 (rad/s)
+exit_frame_threshold: 10 # 连续N帧低于阈值才退出
+ 
+camera_name: "hikrobot"
+exposure_ms: 2  #2
+gain: 12 #12
+vid_pid: "2bdf:0001"
+
+#  1  0  0
+#  0  1  0
+#  0  0  1
+
+R_gimbal2imubody: [0, 1, 0,
+                  -1, 0, 0,
+                   0, 0, 1]
+# R_gimbal2imubody: [1, 0, 0,
+#                   0, 1, 0,
+#                   0, 0, 1]
+
+# 重投影误差: 0.2156px
+camera_matrix: [917.2795904046537, 0, 373.35748014732076, 0, 917.5518833838096, 286.520378970206, 0, 0, 1]
+distort_coeffs: [-0.06476638944576427, 0.11867077897897972, 0.00012973834828332618, -0.0007386899005889237, 0]
+
+# 相机同理想情况的偏角: yaw-1.03 pitch-1.55 roll0.89 degree
+# 标定板到世界原点水平距离: 1.12 m
+# 标定板同竖直摆放时的偏角: yaw-163.20 pitch6.91 roll178.34 degree
+R_camera2gimbal: [0.017476916059833477, -0.02728964435984267, 0.9994747784290262, -0.9997265673711223, 0.015055006188466766, 0.01789238052965929, -0.015535375675870823, -0.9995141930454908, -0.027019067401208144]
+t_camera2gimbal: [0.18489859307715661, -0.06898422783817973, 0.02999243058879014]
+
+
+
+#####-----gimbal参数-----#####
+com_port: "/dev/ttyACM0"
+speed_control: true
+bullet_speed: 11.0  # m/s
+
+#####-----planner-----#####
+fire_thresh: 0.0035
+
+max_yaw_acc: 10
+Q_yaw: [9e5, 0]
+R_yaw: [3]
+
+max_pitch_acc: 50
+Q_pitch: [9e5, 0]
+R_pitch: [3]
+
+#####-----handeye标定参数-----#####
+height: 0.47
+grid_num: 100
+grid_size: 0.05
+

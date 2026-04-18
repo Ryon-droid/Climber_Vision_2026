@@ -1,0 +1,101 @@
+# enemy_color: "red"
+enemy_color: "blue"
+
+# 机器人类型配置（hero或其他）
+robot_type: "hero"  # hero为英雄机器人，其他为普通机器人
+
+#####-----神经网络参数（lobshot不使用，使用传统视觉检测绿灯）-----#####
+# yolo_name: yolov5
+# classify_model: assets/tiny_resnet.onnx
+# yolo11_model_path: assets/yolo11.xml
+# yolov8_model_path: assets/yolov8.xml
+# yolov5_model_path: assets/yolov5.xml
+# device: GPU
+# min_confidence: 0.65 #原检测阈值
+# use_traditional: false
+
+#####-----ROI（lobshot不使用，使用全图检测）-----#####
+# roi: 
+#   x: 420
+#   y: 50
+#   width: 600
+#   height: 600
+# use_roi: false
+
+#####-----传统方法参数（lobshot不使用，用于装甲板检测）-----#####
+# threshold: 150
+# max_angle_error: 45 # degree
+# min_lightbar_ratio: 1.5
+# max_lightbar_ratio: 20
+# min_lightbar_length: 8
+# min_armor_ratio: 1
+# max_armor_ratio: 5
+# max_side_ratio: 1.5
+# max_rectangular_error: 25 # degree
+# min_confidence: 0.8
+
+#####-----tracker参数（lobshot不使用，每帧独立检测）-----#####
+# min_detect_count: 5               #追踪检测次数阈值
+# max_temp_lost_count: 15           #装甲板最大丢失帧数
+# outpost_max_temp_lost_count: 75   #前哨站最大丢失帧数
+
+#####-----aimer参数（仅使用offset）-----#####
+yaw_offset: -1.7 # degree -2.5
+pitch_offset: 0 # degree 2
+# comming_angle: 4 # degree（lobshot不使用）
+# leaving_angle: 4 # degree（lobshot不使用）
+# decision_speed: 8 # rad/s（lobshot不使用）
+# decision_spin: 2 # rad/s（lobshot不使用）
+# high_speed_delay_time: 0.0 # s（lobshot不使用）
+# low_speed_delay_time: 0.0 # s（lobshot不使用）
+
+#####-----shooter参数（lobshot不使用，简化射击逻辑）-----#####
+# first_tolerance: 3 # 近距离射击容差，degree
+# second_tolerance: 1 # 远距离射击容差，degree
+# judge_distance: 3 #距离判断阈值
+# auto_fire: true # 是否由自瞄控制射击
+# fire_time_min_ratio: 0.9 # 小陀螺模式：飞行时间最小提前系数
+# fire_time_max_ratio: 1.1 # 小陀螺模式：飞行时间最大提前系数
+# exit_spinning_threshold: 2.0 # 退出小陀螺模式阈值 (rad/s)
+# exit_frame_threshold: 10 # 连续N帧低于阈值才退出
+ 
+camera_name: "hikrobot"
+exposure_ms: 2  #2
+gain: 12 #12
+vid_pid: "2bdf:0001"
+
+#  1  0  0
+#  0  1  0
+#  0  0  1
+
+R_gimbal2imubody: [0, 1, 0,
+                  -1, 0, 0,
+                   0, 0, 1]
+# R_gimbal2imubody: [1, 0, 0,
+#                   0, 1, 0,
+#                   0, 0, 1]
+
+# 重投影误差: 0.3444px
+camera_matrix: [890.7499818360726, 0, 371.3302869806696, 0, 890.7401625126955, 289.2784153362537, 0, 0, 1]
+distort_coeffs: [-0.07561120168792558, 0.13193357646344459, 0.0004396628205613414, -0.00012282990060278137, 0]
+
+# 相机同理想情况的偏角: yaw-2.47 pitch-0.54 roll-0.05 degree
+# 标定板到世界原点水平距离: 1.76 m
+# 标定板同竖直摆放时的偏角: yaw60.62 pitch3.89 roll179.90 degree
+R_camera2gimbal: [0.043133631685592776, -0.009382060512239424, 0.9990252583184052, -0.999068884732074, -0.0013296634481830478, 0.043123028132594624, 0.0009237845103865189, -0.9999551034599802, -0.00943067794589163]
+t_camera2gimbal: [0.2175542362521196, -0.06219872373547399, 0.03077611249676454]
+
+
+
+#####-----弹道参数-----#####
+bullet_speed: 12.0  # m/s（lobshot弹道解算需要）
+
+#####-----gimbal参数-----#####
+com_port: "/dev/ttyACM0"
+speed_control: true  # true:使用下位机弹速反馈, false:使用配置文件的bullet_speed
+
+#####-----handeye标定参数（lobshot不使用，用于标定程序）-----#####
+# height: 0.47
+# grid_num: 100
+# grid_size: 0.05
+
