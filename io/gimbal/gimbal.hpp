@@ -17,7 +17,7 @@ namespace io
 struct __attribute__((packed)) GimbalToVision
 {
   uint8_t head[2] = {'G', 'V'};
-  uint8_t mode;  // 0: 空闲, 1: 自瞄, 2: 小符, 3: 大符
+  uint8_t mode;  // 0: 空闲, 1: 自瞄, 2: 吊射
   float q[4];    // wxyz顺序
   float yaw;
   float yaw_vel;
