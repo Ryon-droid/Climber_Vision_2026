@@ -20,7 +20,7 @@
 const std::string keys =
   "{help h usage ? |                          | 输出命令行参数说明}"
   "{config-path   | configs/calibration.yaml | yaml配置文件路径 }"
-  "{sharp-thresh s |          20              | 清晰度阈值（拉普拉斯方差），低于此值认为模糊}";
+  "{sharp-thresh s |          5              | 清晰度阈值（拉普拉斯方差），低于此值认为模糊}";
 
 // ─────────────────── 工具 ───────────────────
 

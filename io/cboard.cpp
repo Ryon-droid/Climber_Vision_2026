@@ -228,11 +228,7 @@ namespace io
       // tools::logger()->debug("[Cboard] Received data: mode={}", rx_data_.mode);
       error_count = 0;
 
-      // --- 数据解析 (对应原 CAN callback 逻辑) ---
-      // auto x = rx_data_.q[1];
-      // auto y = rx_data_.q[2];
-      // auto z = rx_data_.q[3];
-      // auto w = rx_data_.q[0];
+      // --- 数据解析：旧版 q[4] 四元数字段已废弃，当前统一使用 yaw/pitch/roll ---
       auto yaw_ = rx_data_.yaw;
       auto pitch_ = rx_data_.pitch;
       auto roll_ = rx_data_.roll;

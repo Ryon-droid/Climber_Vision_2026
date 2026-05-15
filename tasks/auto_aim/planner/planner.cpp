@@ -49,7 +49,9 @@ Plan Planner::plan(Target target, double bullet_speed)
   Trajectory traj;
   try {
     yaw0 = aim(target, bullet_speed)(0);
+    const Eigen::Vector4d debug_xyza_at_hit = debug_xyza;
     traj = get_trajectory(target, yaw0, bullet_speed);
+    debug_xyza = debug_xyza_at_hit;
   } catch (const std::exception & e) {
     tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);
     return {false};
@@ -72,6 +74,7 @@ Plan Planner::plan(Target target, double bullet_speed)
 
   Plan plan;
   plan.control = true;
+  plan.predict_time = bullet_traj.fly_time;
 
   plan.target_yaw = tools::limit_rad(traj(0, HALF_HORIZON) + yaw0);
   plan.target_pitch = traj(2, HALF_HORIZON);
@@ -99,12 +102,17 @@ Plan Planner::plan(std::optional<Target> target, double bullet_speed)
 
   double delay_time =
     std::abs(target->ekf_x()[7]) > decision_speed_ ? high_speed_delay_time_ : low_speed_delay_time_;
+  tools::logger()->debug("Delay time: {:.2f} ms", delay_time * 1e3);
 
   auto future = std::chrono::steady_clock::now() + std::chrono::microseconds(int(delay_time * 1e6));
 
   target->predict(future);
 
-  return plan(*target, bullet_speed);
+  auto result = plan(*target, bullet_speed);
+  if (result.control) {
+    result.predict_time += delay_time;
+  }
+  return result;
 }
 
 void Planner::setup_yaw_solver(const std::string & config_path)

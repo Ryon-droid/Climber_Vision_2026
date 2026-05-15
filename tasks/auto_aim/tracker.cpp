@@ -2,6 +2,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <limits>
 #include <numeric>
 #include <tuple>
 #include <vector>
@@ -11,6 +12,13 @@
 
 namespace auto_aim
 {
+namespace
+{
+const cv::Point2f IMG_CENTER(1440 / 2, 1080 / 2);
+
+double center_distance(const Armor & armor) { return cv::norm(armor.center - IMG_CENTER); }
+}  // namespace
+
 Tracker::Tracker(const std::string & config_path, Solver & solver)
 : solver_{solver},
   detect_count_(0),
@@ -18,7 +26,15 @@ Tracker::Tracker(const std::string & config_path, Solver & solver)
   state_{"lost"},
   pre_state_{"lost"},
   last_timestamp_(std::chrono::steady_clock::now()),
-  omni_target_priority_{ArmorPriority::fifth}
+  omni_target_priority_{ArmorPriority::fifth},
+  target_switch_strategy_{TargetSwitchStrategy::center},
+  target_switch_confirm_frames_{5},
+  target_switch_distance_ratio_{0.8},
+  switch_candidate_name_{ArmorName::not_armor},
+  switch_candidate_type_{ArmorType::small},
+  switch_candidate_count_{0},
+  robot_type_{"standard"},
+  priority_mode_{1}
 {
   auto yaml = YAML::LoadFile(config_path);
   enemy_color_ = (yaml["enemy_color"].as<std::string>() == "red") ? Color::red : Color::blue;
@@ -26,6 +42,34 @@ Tracker::Tracker(const std::string & config_path, Solver & solver)
   max_temp_lost_count_ = yaml["max_temp_lost_count"].as<int>();
   outpost_max_temp_lost_count_ = yaml["outpost_max_temp_lost_count"].as<int>();
   normal_temp_lost_count_ = max_temp_lost_count_;
+  if (yaml["robot_type"]) {
+    robot_type_ = yaml["robot_type"].as<std::string>();
+  }
+  if (yaml["priority_mode"]) {
+    priority_mode_ = yaml["priority_mode"].as<int>();
+  }
+
+  const auto switch_strategy =
+    yaml["target_switch_strategy"] ? yaml["target_switch_strategy"].as<std::string>() : "center";
+  if (switch_strategy == "center") {
+    target_switch_strategy_ = TargetSwitchStrategy::center;
+  } else if (switch_strategy == "distance") {
+    target_switch_strategy_ = TargetSwitchStrategy::distance;
+  } else if (switch_strategy == "priority") {
+    target_switch_strategy_ = TargetSwitchStrategy::priority;
+  } else if (switch_strategy == "disabled") {
+    target_switch_strategy_ = TargetSwitchStrategy::disabled;
+  } else {
+    tools::logger()->warn(
+      "[Tracker] Unknown target_switch_strategy '{}', fallback to center", switch_strategy);
+  }
+
+  if (yaml["target_switch_confirm_frames"]) {
+    target_switch_confirm_frames_ = std::max(1, yaml["target_switch_confirm_frames"].as<int>());
+  }
+  if (yaml["target_switch_distance_ratio"]) {
+    target_switch_distance_ratio_ = yaml["target_switch_distance_ratio"].as<double>();
+  }
 }
 
 std::string Tracker::state() const { return state_; }
@@ -53,14 +97,10 @@ std::list<Target> Tracker::track(
 
   // 2. 根据己方配置自动过滤掉我们不关心的己方装甲板
   armors.remove_if([&](const auto_aim::Armor & a) { return a.color != enemy_color_; });
+  set_priority(armors);
 
   // 3. 对识别到的装甲板按到图像中心的欧氏距离进行升序排序，使优先锁定靠近准星或视图中心的装甲板。
-  armors.sort([](const Armor & a, const Armor & b) {
-    const cv::Point2f img_center(1440 / 2, 1080 / 2);  // TODO: 适配不同分辨率的分发
-    const auto distance_1 = cv::norm(a.center - img_center);
-    const auto distance_2 = cv::norm(b.center - img_center);
-    return distance_1 < distance_2;
-  });
+  armors.sort([](const Armor & a, const Armor & b) { return center_distance(a) < center_distance(b); });
 
   // 4. 按装甲板的语义或兵种优先级排序（例如：英雄 > 步兵 > 哨兵等预设逻辑）。保持稳定的靶标选择。
   armors.sort(
@@ -68,7 +108,9 @@ std::list<Target> Tracker::track(
 
   bool found = false;
   // 5. 根据Tracker目前所处的状态机状态决定采取何种策略。
-  if (state_ == "lost") {
+  if (try_switch_target(armors, t)) {
+    found = true;
+  } else if (state_ == "lost") {
     // 丢失状态下重新建图并捕获新目标，一旦设好 found = true
     found = set_target(armors, t);
   } else {
@@ -162,6 +204,11 @@ bool Tracker::set_target(std::list<Armor> & armors, std::chrono::steady_clock::t
   if (armors.empty()) return false;
 
   auto & armor = armors.front();
+  return set_target(armor, t);
+}
+
+bool Tracker::set_target(Armor & armor, std::chrono::steady_clock::time_point t)
+{
   solver_.solve(armor);
 
   const auto is_balance = (armor.type == ArmorType::big) &&
@@ -183,6 +230,220 @@ bool Tracker::set_target(std::list<Armor> & armors, std::chrono::steady_clock::t
   }
 
   return true;
+}
+
+bool Tracker::try_switch_target(std::list<Armor> & armors, std::chrono::steady_clock::time_point t)
+{
+  if (
+    state_ == "lost" || armors.empty() ||
+    target_switch_strategy_ == TargetSwitchStrategy::disabled) {
+    reset_switch_candidate();
+    return false;
+  }
+
+  std::optional<Armor> candidate;
+  if (!select_switch_candidate(armors, candidate)) {
+    reset_switch_candidate();
+    return false;
+  }
+
+  if (candidate->name == switch_candidate_name_ && candidate->type == switch_candidate_type_) {
+    switch_candidate_count_++;
+  } else {
+    switch_candidate_name_ = candidate->name;
+    switch_candidate_type_ = candidate->type;
+    switch_candidate_count_ = 1;
+  }
+
+  if (switch_candidate_count_ < target_switch_confirm_frames_) return false;
+
+  const auto old_name = target_.name;
+  const auto old_type = target_.armor_type;
+  if (!set_target(*candidate, t)) {
+    reset_switch_candidate();
+    return false;
+  }
+
+  state_ = "lost";
+  detect_count_ = 0;
+  temp_lost_count_ = 0;
+  reset_switch_candidate();
+
+  tools::logger()->info(
+    "[Tracker] Switch target {}({}) -> {}({})", ARMOR_NAMES[old_name], ARMOR_TYPES[old_type],
+    ARMOR_NAMES[target_.name], ARMOR_TYPES[target_.armor_type]);
+  return true;
+}
+
+bool Tracker::select_switch_candidate(std::list<Armor> & armors, std::optional<Armor> & candidate)
+{
+  if (target_switch_strategy_ == TargetSwitchStrategy::center) {
+    return select_center_candidate(armors, candidate);
+  }
+  if (target_switch_strategy_ == TargetSwitchStrategy::distance) {
+    return select_distance_candidate(armors, candidate);
+  }
+  if (target_switch_strategy_ == TargetSwitchStrategy::priority) {
+    return select_priority_candidate(armors, candidate);
+  }
+  return false;
+}
+
+bool Tracker::select_center_candidate(const std::list<Armor> & armors, std::optional<Armor> & candidate)
+  const
+{
+  double current_distance = std::numeric_limits<double>::max();
+  double candidate_distance = std::numeric_limits<double>::max();
+  bool found_current = false;
+  bool found_candidate = false;
+
+  for (const auto & armor : armors) {
+    const auto distance = center_distance(armor);
+    if (is_current_target(armor)) {
+      found_current = true;
+      current_distance = std::min(current_distance, distance);
+      continue;
+    }
+
+    if (distance < candidate_distance) {
+      candidate = armor;
+      candidate_distance = distance;
+      found_candidate = true;
+    }
+  }
+
+  return found_current && found_candidate &&
+         candidate_distance < current_distance * target_switch_distance_ratio_;
+}
+
+bool Tracker::select_distance_candidate(std::list<Armor> & armors, std::optional<Armor> & candidate)
+{
+  double current_distance = std::numeric_limits<double>::max();
+  double candidate_distance = std::numeric_limits<double>::max();
+  bool found_current = false;
+  bool found_candidate = false;
+
+  for (auto & armor : armors) {
+    auto solved_armor = armor;
+    solver_.solve(solved_armor);
+    const auto distance = solved_armor.xyz_in_gimbal.norm();
+
+    if (is_current_target(solved_armor)) {
+      found_current = true;
+      current_distance = std::min(current_distance, distance);
+      continue;
+    }
+
+    if (distance < candidate_distance) {
+      candidate = solved_armor;
+      candidate_distance = distance;
+      found_candidate = true;
+    }
+  }
+
+  return found_current && found_candidate &&
+         candidate_distance < current_distance * target_switch_distance_ratio_;
+}
+
+bool Tracker::select_priority_candidate(const std::list<Armor> & armors, std::optional<Armor> & candidate)
+  const
+{
+  double candidate_distance = std::numeric_limits<double>::max();
+  bool found_candidate = false;
+
+  for (const auto & armor : armors) {
+    if (is_current_target(armor) || !(armor.priority < target_.priority)) continue;
+
+    const auto distance = center_distance(armor);
+    if (
+      !found_candidate || armor.priority < candidate->priority ||
+      (armor.priority == candidate->priority && distance < candidate_distance)) {
+      candidate = armor;
+      candidate_distance = distance;
+      found_candidate = true;
+    }
+  }
+
+  return found_candidate;
+}
+
+bool Tracker::is_current_target(const Armor & armor) const
+{
+  return armor.name == target_.name && armor.type == target_.armor_type;
+}
+
+void Tracker::reset_switch_candidate()
+{
+  switch_candidate_name_ = ArmorName::not_armor;
+  switch_candidate_type_ = ArmorType::small;
+  switch_candidate_count_ = 0;
+}
+
+void Tracker::set_priority(std::list<Armor> & armors) const
+{
+  for (auto & armor : armors) {
+    armor.priority = get_priority(armor.name);
+  }
+}
+
+ArmorPriority Tracker::get_priority(ArmorName name) const
+{
+  if (priority_mode_ == 2) {
+    switch (name) {
+      case ArmorName::two:
+        return ArmorPriority::first;
+      case ArmorName::one:
+        return ArmorPriority::second;
+      case ArmorName::three:
+      case ArmorName::four:
+      case ArmorName::five:
+        return ArmorPriority::second;
+      case ArmorName::sentry:
+      case ArmorName::outpost:
+      case ArmorName::base:
+      case ArmorName::not_armor:
+      default:
+        return ArmorPriority::third;
+    }
+  }
+
+  if (robot_type_ == "hero") {
+    switch (name) {
+      case ArmorName::three:
+      case ArmorName::four:
+        return ArmorPriority::first;
+      case ArmorName::one:
+        return ArmorPriority::second;
+      case ArmorName::five:
+      case ArmorName::sentry:
+        return ArmorPriority::third;
+      case ArmorName::two:
+        return ArmorPriority::forth;
+      case ArmorName::outpost:
+      case ArmorName::base:
+      case ArmorName::not_armor:
+      default:
+        return ArmorPriority::fifth;
+    }
+  }
+
+  switch (name) {
+    case ArmorName::one:
+      return ArmorPriority::second;
+    case ArmorName::two:
+      return ArmorPriority::forth;
+    case ArmorName::three:
+    case ArmorName::four:
+      return ArmorPriority::first;
+    case ArmorName::five:
+    case ArmorName::sentry:
+      return ArmorPriority::third;
+    case ArmorName::outpost:
+    case ArmorName::base:
+    case ArmorName::not_armor:
+    default:
+      return ArmorPriority::fifth;
+  }
 }
 
 bool Tracker::update_target(std::list<Armor> & armors, std::chrono::steady_clock::time_point t)

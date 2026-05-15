@@ -37,7 +37,7 @@ struct __attribute__((packed)) BoardToVision
   uint8_t head[2] = {'B', 'V'}; // 帧头
   uint8_t mode;                 // 射击模式：0手动，1自瞄，2开符
   float bullet_speed;           //  1e2
-  // float q[4];                   // wxyz顺序，四元数/
+  // 废弃字段：历史版本曾使用 float q[4] 直接传四元数（wxyz顺序），现已停用
   float yaw;
   float pitch;
   float roll;

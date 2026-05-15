@@ -49,7 +49,7 @@ add_executable(serial_delay calibration/serial_delay.cpp)
 target_link_libraries(capture ${OpenCV_LIBS} fmt::fmt tools io)
 target_link_libraries(calibrate_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)  # 添加io库
 target_link_libraries(calibrate_usb_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)
-target_link_libraries(calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)  # 添加io库
+target_link_libraries(calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)  # 添加io库
 # target_link_libraries(calibrate_robotworld_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
 target_link_libraries(split_video ${OpenCV_LIBS} fmt::fmt tools)
 target_link_libraries(serial_delay ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
@@ -64,6 +64,7 @@ add_executable(camera_test test/camera_test.cpp)
 add_executable(handeye_test test/handeye_test.cpp)
 add_executable(cboard_test test/Cboard_test.cpp)
 add_executable(gimbal_response_test test/gimbal_response_test.cpp)
+add_executable(gimbal_comm_test test/gimbal_comm_test.cpp)
 
 target_link_libraries(aim_detect_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 target_link_libraries(auto_aim_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
@@ -73,6 +74,7 @@ target_link_libraries(camera_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)
 target_link_libraries(handeye_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 target_link_libraries(cboard_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 target_link_libraries(gimbal_response_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+target_link_libraries(gimbal_comm_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)
 
 ###auto_buff test
 

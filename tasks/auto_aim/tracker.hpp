@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include <chrono>
 #include <list>
+#include <optional>
 #include <string>
 
 #include "armor.hpp"
@@ -51,6 +52,14 @@ public:
   //   std::chrono::steady_clock::time_point t, bool use_enemy_color = true);
 
 private:
+  enum class TargetSwitchStrategy
+  {
+    center,
+    distance,
+    priority,
+    disabled
+  };
+
   Solver & solver_;             ///< 位姿解算器引用
   Color enemy_color_;           ///< 敌人颜色，用于剔除自身的装甲板
   int min_detect_count_;        ///< 从"检测中"进入"追踪中"状态所需的最小连续目标存在帧数
@@ -63,6 +72,14 @@ private:
   Target target_;                 ///< 当前锁定的跟踪目标对象
   std::chrono::steady_clock::time_point last_timestamp_; ///< 上次更新的时间戳，用于计算两帧间的 dt
   ArmorPriority omni_target_priority_; ///< 全向感知的目标优先级
+  TargetSwitchStrategy target_switch_strategy_; ///< 锁定期间的主动切板策略
+  int target_switch_confirm_frames_; ///< 候选目标连续满足切换条件的帧数
+  double target_switch_distance_ratio_; ///< center/distance策略下候选距离阈值比例
+  ArmorName switch_candidate_name_; ///< 当前切换候选目标名称
+  ArmorType switch_candidate_type_; ///< 当前切换候选装甲板类型
+  int switch_candidate_count_; ///< 当前候选已连续满足条件的帧数
+  std::string robot_type_;
+  int priority_mode_;
 
   /**
    * @brief 核心状态机更新：根据当前帧是否匹配到目标，切换跟踪器的内部状态
@@ -77,6 +94,7 @@ private:
    * @return 是否成功锁定了新目标
    */
   bool set_target(std::list<Armor> & armors, std::chrono::steady_clock::time_point t);
+  bool set_target(Armor & armor, std::chrono::steady_clock::time_point t);
 
   /**
    * @brief 当状态不为 lost 时调用，使用当前视野中的装甲板测量值，去更新当前的跟踪目标（EKF观测更新）
@@ -85,6 +103,17 @@ private:
    * @return 是否在当前帧中成功找到并更新了对应的跟踪目标
    */
   bool update_target(std::list<Armor> & armors, std::chrono::steady_clock::time_point t);
+  bool try_switch_target(std::list<Armor> & armors, std::chrono::steady_clock::time_point t);
+  bool select_switch_candidate(std::list<Armor> & armors, std::optional<Armor> & candidate);
+  bool select_center_candidate(const std::list<Armor> & armors, std::optional<Armor> & candidate)
+    const;
+  bool select_distance_candidate(std::list<Armor> & armors, std::optional<Armor> & candidate);
+  bool select_priority_candidate(const std::list<Armor> & armors, std::optional<Armor> & candidate)
+    const;
+  bool is_current_target(const Armor & armor) const;
+  void reset_switch_candidate();
+  void set_priority(std::list<Armor> & armors) const;
+  ArmorPriority get_priority(ArmorName name) const;
 };
 
 }  // namespace auto_aim

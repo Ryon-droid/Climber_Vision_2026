@@ -1,29 +1,31 @@
 camera_name: "hikrobot"
-exposure_ms: 10
-gain: 16
+exposure_ms: 16
+gain: 12
 vid_pid: "2bdf:0001"
 
-
+#####-----gimbal参数-----#####
+com_port: "/dev/ttyACM0"
+baudrate: 921600
+speed_control: true
+bullet_speed: 11.0  # m/s
+auto_fire: false
 
 pattern_cols: 11
 pattern_rows: 8
-center_distance_mm: 15
+center_distance_mm: 30
 pattern_type: "chessboard"  # "chessboard" 或 "circles"
 
-com_port: "/dev/ttyACM0"
-speed_control: false
-bullet_speed: 11.2  # m/s
 
-R_gimbal2imubody: [0, 1, 0,
-                  -1, 0, 0,
-                   0, 0, 1]
-# R_gimbal2imubody: [1, 0, 0,
-#                   0, 1, 0,
-#                   0, 0, 1]
+# R_gimbal2imubody: [0, 1, 0,
+#                   -1, 0, 0,
+#                    0, 0, 1]
+R_gimbal2imubody: [1, 0, 0,
+                  0, 1, 0,
+                  0, 0, 1]
 
-# 重投影误差: 0.2156px
-camera_matrix: [917.2795904046537, 0, 373.35748014732076, 0, 917.5518833838096, 286.520378970206, 0, 0, 1]
-distort_coeffs: [-0.06476638944576427, 0.11867077897897972, 0.00012973834828332618, -0.0007386899005889237, 0]
+# 重投影误差: 0.1653px
+camera_matrix: [2380.7315437689435, 0, 767.06744258117578, 0, 2379.6309899935382, 574.92842708753699, 0, 0, 1]
+distort_coeffs: [-0.033496948861302278, 0.1820578517683564, 0.00097402177397579788, 0.00059367918688272355, 0]
 
 # 相机同理想情况的偏角: yaw-1.03 pitch-1.55 roll0.89 degree
 # 标定板到世界原点水平距离: 1.12 m

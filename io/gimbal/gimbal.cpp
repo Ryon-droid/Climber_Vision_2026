@@ -8,13 +8,18 @@
 namespace io
 {
 Gimbal::Gimbal(const std::string & config_path)
+  : solver_(config_path)
 {
   auto yaml = tools::load(config_path);
   auto com_port = tools::read<std::string>(yaml, "com_port");
+  auto baudrate = tools::read<int>(yaml, "baudrate");
+  speed_control_ = tools::read<bool>(yaml, "speed_control");
+  bullet_speed_config_ = tools::read<double>(yaml, "bullet_speed");
+  auto_fire_ = tools::read<bool>(yaml, "auto_fire");
 
   try {
     serial_.setPort(com_port);
-    serial_.setBaudrate(115200);
+    serial_.setBaudrate(baudrate);
     serial_.setFlowcontrol(serial::flowcontrol_none);
     serial_.setParity(serial::parity_none);
     serial_.setStopbits(serial::stopbits_one);
@@ -60,10 +65,8 @@ std::string Gimbal::str(GimbalMode mode) const
       return "IDLE";
     case GimbalMode::AUTO_AIM:
       return "AUTO_AIM";
-    case GimbalMode::SMALL_BUFF:
-      return "SMALL_BUFF";
-    case GimbalMode::BIG_BUFF:
-      return "BIG_BUFF";
+    case GimbalMode::LOBSHOT:
+      return "LOBSHOT";
     default:
       return "INVALID";
   }
@@ -88,6 +91,9 @@ Eigen::Quaterniond Gimbal::q(std::chrono::steady_clock::time_point t)
 void Gimbal::send(io::VisionToGimbal VisionToGimbal)
 {
   tx_data_.mode = VisionToGimbal.mode;
+  if (!auto_fire_ && tx_data_.mode == 2) {
+    tx_data_.mode = 1;
+  }
   tx_data_.yaw = VisionToGimbal.yaw;
   tx_data_.yaw_vel = VisionToGimbal.yaw_vel;
   tx_data_.yaw_acc = VisionToGimbal.yaw_acc;
@@ -100,6 +106,18 @@ void Gimbal::send(io::VisionToGimbal VisionToGimbal)
   tx_data_.tail[1] = 'N';
   try {
     serial_.write(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
+    const auto mode = tx_data_.mode;
+    const auto yaw_sent = tx_data_.yaw;
+    const auto yaw_vel_sent = tx_data_.yaw_vel;
+    const auto yaw_acc_sent = tx_data_.yaw_acc;
+    const auto pitch_sent = tx_data_.pitch;
+    const auto pitch_vel_sent = tx_data_.pitch_vel;
+    const auto pitch_acc_sent = tx_data_.pitch_acc;
+    tools::logger()->debug(
+      "[Gimbal] Sent packet - mode: {}, yaw: {:.4f} rad ({:.2f} deg), yaw_vel: {:.4f}, "
+      "yaw_acc: {:.4f}, pitch: {:.4f} rad ({:.2f} deg), pitch_vel: {:.4f}, pitch_acc: {:.4f}",
+      mode, yaw_sent, yaw_sent * 57.3F, yaw_vel_sent, yaw_acc_sent, pitch_sent, pitch_sent * 57.3F,
+      pitch_vel_sent, pitch_acc_sent);
   } catch (const std::exception & e) {
     tools::logger()->warn("[Gimbal] Failed to write serial: {}", e.what());
   }
@@ -109,6 +127,7 @@ void Gimbal::send(
   bool control, bool fire, float yaw, float yaw_vel, float yaw_acc, float pitch, float pitch_vel,
   float pitch_acc)
 {
+  fire = fire && auto_fire_;
   tx_data_.mode = control ? (fire ? 2 : 1) : 0;
   tx_data_.yaw = yaw;
   tx_data_.yaw_vel = yaw_vel;
@@ -123,10 +142,18 @@ void Gimbal::send(
 
   try {
     serial_.write(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
-    // tools::logger()->debug(
-    //   "[Gimbal] Sent command - MODE: {}, Yaw: {:.2f}, Yaw vel: {:.2f}, Yaw acc: {:.2f}, "
-    //   "Pitch: {:.2f}, Pitch vel: {:.2f}, Pitch acc: {:.2f}",
-    //   tx_data_.mode, yaw, yaw_vel, yaw_acc, pitch, pitch_vel, pitch_acc);
+    const auto mode = tx_data_.mode;
+    const auto yaw_sent = tx_data_.yaw;
+    const auto yaw_vel_sent = tx_data_.yaw_vel;
+    const auto yaw_acc_sent = tx_data_.yaw_acc;
+    const auto pitch_sent = tx_data_.pitch;
+    const auto pitch_vel_sent = tx_data_.pitch_vel;
+    const auto pitch_acc_sent = tx_data_.pitch_acc;
+    tools::logger()->debug(
+      "[Gimbal] Sent packet - mode: {}, yaw: {:.4f} rad ({:.2f} deg), yaw_vel: {:.4f}, "
+      "yaw_acc: {:.4f}, pitch: {:.4f} rad ({:.2f} deg), pitch_vel: {:.4f}, pitch_acc: {:.4f}",
+      mode, yaw_sent, yaw_sent * 57.3F, yaw_vel_sent, yaw_acc_sent, pitch_sent, pitch_sent * 57.3F,
+      pitch_vel_sent, pitch_acc_sent);
   } catch (const std::exception & e) {
     tools::logger()->warn("[Gimbal] Failed to write serial: {}", e.what());
   }
@@ -146,6 +173,7 @@ void Gimbal::read_thread()
 {
   tools::logger()->info("[Gimbal] read_thread started.");
   int error_count = 0;
+  constexpr float kBulletSpeedDiffEps = 1e-3F;
 
   while (!quit_) {
     if (error_count > 5000) {
@@ -179,16 +207,79 @@ void Gimbal::read_thread()
 
 
     error_count = 0;
-    Eigen::Quaterniond q(rx_data_.q[0], rx_data_.q[1], rx_data_.q[2], rx_data_.q[3]);
-    queue_.push({q, t});
+    auto yaw_ = rx_data_.yaw;
+    auto pitch_ = rx_data_.pitch;
+    auto roll_ = rx_data_.roll;
+    if (!std::isfinite(yaw_) || !std::isfinite(pitch_) || !std::isfinite(roll_)) {
+      tools::logger()->warn(
+        "[Gimbal] Invalid euler: yaw={}, pitch={}, roll={}", yaw_, pitch_, roll_);
+      continue;
+    }
+
+    constexpr double kMaxReasonableAngle = 32.0 * M_PI;
+    if (
+      std::abs(yaw_) > kMaxReasonableAngle || std::abs(pitch_) > kMaxReasonableAngle ||
+      std::abs(roll_) > kMaxReasonableAngle) {
+      tools::logger()->warn(
+        "[Gimbal] Suspicious euler magnitude: yaw={:.4f}, pitch={:.4f}, roll={:.4f}",
+        yaw_, pitch_, roll_);
+      continue;
+    }
+
+    Eigen::Quaterniond q =
+      (Eigen::AngleAxisd(yaw_, Eigen::Vector3d::UnitZ()) *
+       Eigen::AngleAxisd(pitch_, Eigen::Vector3d::UnitY()) *
+       Eigen::AngleAxisd(roll_, Eigen::Vector3d::UnitX()))
+        .normalized();
+
+    auto x = q.x();
+    auto y = q.y();
+    auto z = q.z();
+    auto w = q.w();
+    if (std::isnan(x) || std::isnan(y) || std::isnan(z) || std::isnan(w)) {
+      tools::logger()->warn(
+        "[Gimbal] Invalid q: NaN detected - w={}, x={}, y={}, z={}", w, x, y, z);
+    } else if (std::abs(x * x + y * y + z * z + w * w - 1) > 1e-2) {
+      tools::logger()->warn(
+        "[Gimbal] Invalid q: magnitude check failed - w={}, x={}, y={}, z={}", w, x, y, z);
+    } else {
+      queue_.push({{w, x, y, z}, t});
+    }
 
     std::lock_guard<std::mutex> lock(mutex_);
 
-    state_.yaw = rx_data_.yaw;
+    if (speed_control_) {
+      const float current_bullet_speed = rx_data_.bullet_speed;
+      if (
+        !has_last_bullet_speed_sample_ ||
+        std::fabs(current_bullet_speed - last_bullet_speed_sample_) > kBulletSpeedDiffEps)
+      {
+        bullet_speed_samples_[bullet_speed_sample_index_] = current_bullet_speed;
+        bullet_speed_sample_index_ = (bullet_speed_sample_index_ + 1) % bullet_speed_samples_.size();
+        if (bullet_speed_sample_count_ < bullet_speed_samples_.size()) {
+          bullet_speed_sample_count_++;
+        }
+        last_bullet_speed_sample_ = current_bullet_speed;
+        has_last_bullet_speed_sample_ = true;
+      }
+
+      if (bullet_speed_sample_count_ == bullet_speed_samples_.size()) {
+        float sum = 0.0F;
+        for (float speed_sample : bullet_speed_samples_) {
+          sum += speed_sample;
+        }
+        state_.bullet_speed = sum / static_cast<float>(bullet_speed_samples_.size());
+      } else {
+        state_.bullet_speed = current_bullet_speed;
+      }
+    } else {
+      state_.bullet_speed = bullet_speed_config_;
+    }
+
+    state_.yaw = tools::limit_rad(rx_data_.yaw);
     state_.yaw_vel = rx_data_.yaw_vel;
-    state_.pitch = rx_data_.pitch;
+    state_.pitch = tools::limit_rad(rx_data_.pitch);
     state_.pitch_vel = rx_data_.pitch_vel;
-    state_.bullet_speed = rx_data_.bullet_speed;
     state_.bullet_count = rx_data_.bullet_count;
 
     switch (rx_data_.mode) {
@@ -199,10 +290,7 @@ void Gimbal::read_thread()
         mode_ = GimbalMode::AUTO_AIM;
         break;
       case 2:
-        mode_ = GimbalMode::SMALL_BUFF;
-        break;
-      case 3:
-        mode_ = GimbalMode::BIG_BUFF;
+        mode_ = GimbalMode::LOBSHOT;
         break;
       default:
         mode_ = GimbalMode::IDLE;
@@ -228,6 +316,10 @@ void Gimbal::reconnect()
     try {
       serial_.open();  // 尝试重新打开
       queue_.clear();
+      bullet_speed_samples_ = {0.0F, 0.0F, 0.0F};
+      bullet_speed_sample_count_ = 0;
+      bullet_speed_sample_index_ = 0;
+      has_last_bullet_speed_sample_ = false;
       tools::logger()->info("[Gimbal] Reconnected serial successfully.");
       break;
     } catch (const std::exception & e) {

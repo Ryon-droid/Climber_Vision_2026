@@ -35,13 +35,13 @@
 const std::string keys =
   "{help h usage ? |                          | 输出命令行参数说明}"
   "{config-path   c| configs/calibration.yaml | yaml配置文件路径 }"
-  "{protocol p     |        cboard           | 通信协议: cboard 或 gimbal}"
+  "{protocol p     |       gimbal         | 通信协议: cboard 或 gimbal}"
   "{min-samples n  |          15              | 开始标定所需最少样本数}"
   "{reproj-thresh  |          1.5             | 重投影误差离群点阈值（像素）}"
   "{auto           |                          | 启用自动捕获模式}"
   "{min-angle a    |          5.0             | 自动捕获：最小云台角度变化（度）}"
   "{stable-thresh  |          1.0             | 自动捕获：角点稳定阈值（像素）}"
-  "{sharp-thresh  s|          20              | 清晰度阈值（拉普拉斯方差），低于此值认为模糊}";
+  "{sharp-thresh  s|          5              | 清晰度阈值（拉普拉斯方差），低于此值认为模糊}";
 
 // ─────────────────── 工具函数 ───────────────────
 

@@ -20,6 +20,7 @@ struct Plan
 {
   bool control;
   bool fire;
+  double predict_time;
   float target_yaw;
   float target_pitch;
   float yaw;
