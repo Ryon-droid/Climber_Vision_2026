@@ -12,7 +12,7 @@
 
 const std::string keys =
     "{help h usage ? |      | 输出命令行参数说明}"
-    "{config-path c  | configs/test.yaml | yaml配置文件的路径}";
+    "{config-path c  | configs/hero.yaml | yaml配置文件的路径}";
 
 int main(int argc, char *argv[])
 {

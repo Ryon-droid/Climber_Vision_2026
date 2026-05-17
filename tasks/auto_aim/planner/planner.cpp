@@ -28,7 +28,7 @@ Plan Planner::plan(Target target, double bullet_speed)
 {
   // 0. Check bullet speed
   if (bullet_speed < 10 || bullet_speed > 25) {
-    bullet_speed = 22;
+    bullet_speed = 11;
   }
 
   // 1. Predict fly_time
