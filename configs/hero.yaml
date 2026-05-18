@@ -49,10 +49,10 @@ yaw_offset: -2.5 # degree -2.5
 pitch_offset: 0 # degree 2
 comming_angle: 0 # degree
 leaving_angle: 0 # degree
-decision_speed: 8 # rad/s       #小陀罗判定速度 快、慢
+decision_speed: 5 # rad/s       #小陀罗判定速度 快、慢  8
 decision_spin: 2 # rad/s       #小陀罗模式判定
-high_speed_delay_time: 0.0 # s   0.03
-low_speed_delay_time: 0.0 # s  0.015
+high_speed_delay_time: 0.26 # s   0.03
+low_speed_delay_time: 0.26 # s  0.015
 
 #####-----shooter参数-----#####
 first_tolerance: 3 # 近距离射击容差，degree
@@ -84,9 +84,11 @@ R_gimbal2imubody: [1, 0, 0,
 camera_matrix: [2380.7315437689435, 0, 767.06744258117578, 0, 2379.6309899935382, 574.92842708753699, 0, 0, 1]
 distort_coeffs: [-0.033496948861302278, 0.1820578517683564, 0.00097402177397579788, 0.00059367918688272355, 0]
 
-R_camera2gimbal: [0.017748, -0.00984461, 0.999794, -0.999722, 0.0153673, 0.017898, -0.0155404, -0.999833, -0.00956913]
-t_camera2gimbal: [0.184899, -0.0689842, 0.0299924]
-
+# 相机同理想情况的偏角: yaw0.50 pitch-3.14 roll0.36 degree
+# 标定板到世界原点水平距离: 1.69 m
+# 标定板同竖直摆放时的偏角: yaw-20.79 pitch6.59 roll-1.86 degree
+R_camera2gimbal: [0.0262582, 0.000919502, 0.999655, -0.999636, 0.00622729, 0.026252, -0.006201, -0.99998, 0.00108268]
+t_camera2gimbal: [0.229862, -0.0180265, -0.0643407]
 
 #####-----gimbal参数-----#####
 com_port: "/dev/ttyACM0"
@@ -96,10 +98,10 @@ bullet_speed: 11.0  # m/s
 
 #####-----planner-----#####
 fire_thresh: 0.0035
-fire_yaw_tolerance: 1.3
-fire_pitch_tolerance: 1.3
+fire_yaw_tolerance: 1.0
+fire_pitch_tolerance: 1.0
 
-max_yaw_acc: 10
+max_yaw_acc: 15  #10
 Q_yaw: [9e5, 0]
 R_yaw: [3]
 

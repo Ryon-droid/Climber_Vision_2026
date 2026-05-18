@@ -8,6 +8,11 @@
 
 namespace auto_aim
 {
+namespace
+{
+constexpr int kOutpostTargetSlot = 2;
+}
+
 Shooter::Shooter(const std::string & config_path) : last_command_{false, false, 0, 0}
 {
   auto yaml = YAML::LoadFile(config_path);
@@ -70,6 +75,34 @@ bool Shooter::shoot(
     // 获取装甲板列表，计算 coming 方向装甲板的 delta_angle
     std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
     if (armor_xyza_list.empty()) {
+      last_command_ = command;
+      return false;
+    }
+
+    if (target.name == ArmorName::outpost) {
+      const auto & target_armor_xyza = armor_xyza_list[kOutpostTargetSlot];
+      double armor_yaw = target_armor_xyza[3];
+      double delta_angle = tools::limit_rad(armor_yaw - center_yaw);
+      bool is_coming = (target.ekf_x()[7] > 0 && delta_angle < 0) ||
+                       (target.ekf_x()[7] < 0 && delta_angle > 0);
+      if (!is_coming) {
+        last_command_ = command;
+        return false;
+      }
+
+      double time_to_front = std::abs(delta_angle / target.ekf_x()[7]);
+      double ratio = time_to_front / fly_time;
+      if (ratio >= fire_time_min_ratio_ && ratio <= fire_time_max_ratio_) {
+        if (bullet_speed_window_.empty() || bullet_speed != bullet_speed_window_.back()) {
+          bullet_speed_window_.push_back(bullet_speed);
+          if (bullet_speed_window_.size() > WINDOW_SIZE) {
+            bullet_speed_window_.pop_front();
+          }
+        }
+        last_command_ = command;
+        return true;
+      }
+
       last_command_ = command;
       return false;
     }

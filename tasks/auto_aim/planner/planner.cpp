@@ -10,6 +10,30 @@ using namespace std::chrono_literals;
 
 namespace auto_aim
 {
+namespace
+{
+constexpr int kOutpostTargetSlot = 2;
+
+Eigen::Vector4d select_planner_xyza(const Target & target)
+{
+  const auto armor_xyza_list = target.armor_xyza_list();
+  if (armor_xyza_list.empty()) return Eigen::Vector4d::Zero();
+
+  if (target.name == ArmorName::outpost) return armor_xyza_list[kOutpostTargetSlot];
+
+  auto best_xyza = armor_xyza_list.front();
+  auto min_dist = std::numeric_limits<double>::infinity();
+  for (const auto & xyza : armor_xyza_list) {
+    const auto dist = xyza.head<2>().norm();
+    if (dist < min_dist) {
+      min_dist = dist;
+      best_xyza = xyza;
+    }
+  }
+  return best_xyza;
+}
+}
+
 Planner::Planner(const std::string & config_path)
 {
   auto yaml = tools::load(config_path);
@@ -32,15 +56,9 @@ Plan Planner::plan(Target target, double bullet_speed)
   }
 
   // 1. Predict fly_time
-  Eigen::Vector3d xyz;
-  auto min_dist = 1e10;
-  for (auto & xyza : target.armor_xyza_list()) {
-    auto dist = xyza.head<2>().norm();
-    if (dist < min_dist) {
-      min_dist = dist;
-      xyz = xyza.head<3>();
-    }
-  }
+  const auto selected_xyza = select_planner_xyza(target);
+  Eigen::Vector3d xyz = selected_xyza.head<3>();
+  auto min_dist = xyz.head<2>().norm();
   auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, xyz.z());
   target.predict(bullet_traj.fly_time);
 
@@ -163,18 +181,10 @@ void Planner::setup_pitch_solver(const std::string & config_path)
 
 Eigen::Matrix<double, 2, 1> Planner::aim(const Target & target, double bullet_speed)
 {
-  Eigen::Vector3d xyz;
-  double yaw;
-  auto min_dist = 1e10;
-
-  for (auto & xyza : target.armor_xyza_list()) {
-    auto dist = xyza.head<2>().norm();
-    if (dist < min_dist) {
-      min_dist = dist;
-      xyz = xyza.head<3>();
-      yaw = xyza[3];
-    }
-  }
+  const auto selected_xyza = select_planner_xyza(target);
+  Eigen::Vector3d xyz = selected_xyza.head<3>();
+  double yaw = selected_xyza[3];
+  auto min_dist = xyz.head<2>().norm();
   debug_xyza = Eigen::Vector4d(xyz.x(), xyz.y(), xyz.z(), yaw);
 
   auto azim = std::atan2(xyz.y(), xyz.x());

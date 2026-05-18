@@ -11,6 +11,11 @@
 
 namespace auto_aim
 {
+namespace
+{
+constexpr int kOutpostTargetSlot = 2;
+}
+
 Aimer::Aimer(const std::string & config_path)
 : left_yaw_offset_(std::nullopt), right_yaw_offset_(std::nullopt)
 {
@@ -145,10 +150,11 @@ io::Command Aimer::aim(
   // 小陀螺模式：yaw 瞄准车辆中心，pitch 瞄准装甲板
   double yaw;
   double pitch;
-  if (is_spinning_top_) {
+  if (is_spinning_top_ && target.name != ArmorName::outpost) {
     yaw = center_yaw_ + yaw_offset_;
     pitch = -(current_traj.pitch + pitch_offset_);
   } else {
+    // 前哨站始终跟随指定装甲板的实际方位，不在高速旋转时切回中心锁车。
     yaw = std::atan2(final_xyz.y(), final_xyz.x()) + yaw_offset_;
     pitch = -(current_traj.pitch + pitch_offset_);
   }
@@ -187,6 +193,11 @@ AimPoint Aimer::choose_aim_point(const Target & target)
 {
   Eigen::VectorXd ekf_x = target.ekf_x();
   std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
+  if (armor_xyza_list.empty()) return {false, Eigen::Vector4d::Zero()};
+
+  // 前哨站固定锁定槽位 2。
+  if (target.name == ArmorName::outpost) return {true, armor_xyza_list[kOutpostTargetSlot]};
+
   auto armor_num = armor_xyza_list.size();
   // 如果装甲板未发生过跳变，则只有当前装甲板的位置已知
   if (!target.jumped) return {true, armor_xyza_list[0]};
