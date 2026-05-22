@@ -12,14 +12,10 @@ namespace auto_aim
 {
 namespace
 {
-constexpr int kOutpostTargetSlot = 2;
-
 Eigen::Vector4d select_planner_xyza(const Target & target)
 {
   const auto armor_xyza_list = target.armor_xyza_list();
   if (armor_xyza_list.empty()) return Eigen::Vector4d::Zero();
-
-  if (target.name == ArmorName::outpost) return armor_xyza_list[kOutpostTargetSlot];
 
   auto best_xyza = armor_xyza_list.front();
   auto min_dist = std::numeric_limits<double>::infinity();

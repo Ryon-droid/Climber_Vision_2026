@@ -25,6 +25,7 @@ add_subdirectory(io)
 add_subdirectory(tasks/auto_aim)
 add_subdirectory(tasks/auto_buff)
 add_subdirectory(tasks/omniperception)
+add_subdirectory(tasks/lobshot)
 
 ####################src###################
 add_executable(sentry src/sentry.cpp)
@@ -32,10 +33,10 @@ add_executable(sentry_aim src/sentry_aim.cpp)
 add_executable(infantry src/infantry.cpp)
 add_executable(hero src/hero.cpp)
 
-target_link_libraries(infantry ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception tools io)
-target_link_libraries(sentry_aim ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception tools io)
-target_link_libraries(sentry ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception tools io)
-target_link_libraries(hero ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception tools io)
+target_link_libraries(infantry ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception lobshot tools io)
+target_link_libraries(sentry_aim ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception lobshot tools io)
+target_link_libraries(sentry ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception lobshot tools io)
+target_link_libraries(hero ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception lobshot tools io)
 
 ##################calibration################
 add_executable(capture calibration/capture.cpp)
@@ -118,5 +119,5 @@ target_link_libraries(multi_usbcamera_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto
 # endif()
 
 
-target_link_libraries(sentry ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff omniperception tools io)
-target_link_libraries(infantry ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff omniperception tools io)
+target_link_libraries(sentry ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff omniperception lobshot tools io)
+target_link_libraries(infantry ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff omniperception lobshot tools io)

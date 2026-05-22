@@ -2,6 +2,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <memory>
 #include <Eigen/Dense>
 #include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
@@ -16,6 +18,7 @@
 #include "tasks/auto_aim/solver.hpp"
 #include "tasks/auto_aim/tracker.hpp"
 #include "tasks/auto_aim/yolo.hpp"
+#include "tasks/lobshot/lobshot.hpp"
 #include "tools/exiter.hpp"
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
@@ -41,13 +44,17 @@ int main(int argc, char * argv[])
   }
   auto config_path = parser.get<std::string>(0);
   auto yaml = tools::load(config_path);
+  const auto lobshot_config_path =
+    (std::filesystem::path(config_path).parent_path() / "lobshot.yaml").string();
 
   tools::Exiter exiter;
   tools::Plotter plotter;
   tools::Recorder recorder;
 
-  io::Camera camera(config_path);
+  std::unique_ptr<io::Camera> aim_camera;
   io::Gimbal gimbal(config_path);
+  lobshot::Lobshot lobshot_sender(lobshot_config_path);
+  std::unique_ptr<io::Camera> lobshot_camera;
 
   auto use_tradition = tools::read<bool>(yaml, "use_traditional");
   const double fire_yaw_tolerance =
@@ -73,6 +80,13 @@ int main(int argc, char * argv[])
     while (!quit) {
       auto target_opt = target_queue.front();
       auto gs = gimbal.state();
+      auto gimbal_mode = gimbal.mode();
+
+      if (gimbal_mode == io::GimbalMode::LOBSHOT) {
+        gimbal.send(false, false, 0, 0, 0, 0, 0, 0);
+        std::this_thread::sleep_for(10ms);
+        continue;
+      }
 
       Plan plan;
       if (target_opt.has_value()) {
@@ -133,13 +147,66 @@ int main(int argc, char * argv[])
 
   cv::Mat img;
   std::chrono::steady_clock::time_point t;
+  auto fps_window_start = std::chrono::steady_clock::now();
+  int fps_frame_count = 0;
+  auto report_fps = [&](io::GimbalMode mode) {
+    fps_frame_count++;
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed = tools::delta_time(now, fps_window_start);
+    if (elapsed >= 1.0) {
+      tools::logger()->info("[Hero] {} FPS: {:.2f}", gimbal.str(mode), fps_frame_count / elapsed);
+      fps_window_start = now;
+      fps_frame_count = 0;
+    }
+  };
 
   while (!exiter.exit()) {
-    camera.read(img, t);
+    const auto gimbal_mode = gimbal.mode();
+    if (gimbal_mode == io::GimbalMode::LOBSHOT) {
+      if (aim_camera) {
+        tools::logger()->info("[Hero] Releasing aim camera after entering lobshot mode.");
+        aim_camera.reset();
+      }
+      if (!lobshot_camera) {
+        tools::logger()->info("[Hero] Initializing lobshot camera on demand.");
+        lobshot_camera = std::make_unique<io::Camera>(config_path, "lobshot");
+      }
+      lobshot_camera->read(img, t);
+    } else {
+      if (lobshot_camera) {
+        tools::logger()->info("[Hero] Releasing lobshot camera after exiting lobshot mode.");
+        lobshot_camera.reset();
+      }
+      if (!aim_camera) {
+        tools::logger()->info("[Hero] Initializing aim camera on demand.");
+        aim_camera = std::make_unique<io::Camera>(config_path, "aim");
+      }
+      aim_camera->read(img, t);
+    }
     if (img.empty()) break;
 
     auto q = gimbal.q(t);
     recorder.record(img, q, t);
+
+    if (gimbal_mode == io::GimbalMode::LOBSHOT) {
+      lobshot_sender.set_enabled(true);
+      lobshot_sender.process(img, t);
+      target_queue.push(std::nullopt);
+
+      auto draw_img = lobshot_sender.debug_frame();
+      if (draw_img.empty()) {
+        draw_img = img.clone();
+      }
+      tools::draw_text(draw_img, "[LOBSHOT]", {10, 30}, {255, 255, 255});
+      cv::resize(draw_img, draw_img, {}, 0.5, 0.5);
+      cv::imshow("hero_debug", draw_img);
+      report_fps(gimbal_mode);
+
+      if (cv::waitKey(1) == 'q') break;
+      continue;
+    }
+
+    lobshot_sender.set_enabled(false);
 
     auto last = std::chrono::steady_clock::now();
     solver.set_R_gimbal2world(q);
@@ -184,9 +251,6 @@ int main(int argc, char * argv[])
 
       auto plan_target = target;
       target_queue.push(plan_target);
-
-      auto dt = tools::delta_time(std::chrono::steady_clock::now(), last);
-      tools::logger()->info("{:.2f} fps", 1 / dt);
     } else {
       target_queue.push(std::nullopt);
     }
@@ -197,12 +261,14 @@ int main(int argc, char * argv[])
 
     cv::resize(draw_img, draw_img, {}, 0.5, 0.5);
     cv::imshow("hero_debug", draw_img);
+    report_fps(gimbal_mode);
 
     if (cv::waitKey(1) == 'q') break;
   }
 
   quit = true;
   if (plan_thread.joinable()) plan_thread.join();
+  lobshot_sender.set_enabled(false);
   gimbal.send(false, false, 0, 0, 0, 0, 0, 0);
 
   return 0;

@@ -11,11 +11,6 @@
 
 namespace auto_aim
 {
-namespace
-{
-constexpr int kOutpostTargetSlot = 2;
-}
-
 Aimer::Aimer(const std::string & config_path)
 : left_yaw_offset_(std::nullopt), right_yaw_offset_(std::nullopt)
 {
@@ -194,9 +189,6 @@ AimPoint Aimer::choose_aim_point(const Target & target)
   Eigen::VectorXd ekf_x = target.ekf_x();
   std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
   if (armor_xyza_list.empty()) return {false, Eigen::Vector4d::Zero()};
-
-  // 前哨站固定锁定槽位 2。
-  if (target.name == ArmorName::outpost) return {true, armor_xyza_list[kOutpostTargetSlot]};
 
   auto armor_num = armor_xyza_list.size();
   // 如果装甲板未发生过跳变，则只有当前装甲板的位置已知

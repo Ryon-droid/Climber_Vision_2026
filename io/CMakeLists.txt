@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
 find_package(yaml-cpp REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GSTREAMER REQUIRED IMPORTED_TARGET gstreamer-1.0 gstreamer-app-1.0)
 
 add_subdirectory(serial)
 
@@ -12,6 +14,7 @@ add_library(io STATIC
     cboard.cpp
     # # dm_imu/dm_imu.cpp
     gimbal/gimbal.cpp
+    lobshot/lobshot_comm.cpp
 )
 
 # hikrobot
@@ -34,7 +37,7 @@ endif()
 #   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_HOST_SYSTEM_PROCESSOR}!")
 # endif()
 
-target_link_libraries(io MvCameraControl usb-1.0 yaml-cpp serial)
+target_link_libraries(io MvCameraControl usb-1.0 yaml-cpp serial PkgConfig::GSTREAMER)
 
 # ################## 检查 ROS 环境 ##################
 # find_package(ament_cmake QUIET)

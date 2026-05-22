@@ -8,3 +8,6 @@
 /.codex
 /records
 /build_hero_migration
+/build_codex
+/build_codex_verify
+/scripts/__pycache__

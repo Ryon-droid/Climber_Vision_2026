@@ -4,7 +4,7 @@
 这是一个用于 RoboMaster 自主瞄准的 C++17 计算机视觉项目。使用 CMake 构建系统，集成了 OpenCV、Eigen、spdlog、yaml-cpp 和 tinympc。
 
 ## 最近更新
-- 移除了 hero 机器人的 lobshot 吊射功能
+- 将 hero 机器人的 lobshot 吊射功能重新并入当前仓库，移除了原 ROS 发送端依赖
 - 将所有机器人的通信方式从 CBoard 改为 Gimbal
 - 为 hero 机器人添加了 Planner 轨迹规划功能
 - 统一了 OpenVINO 路径配置

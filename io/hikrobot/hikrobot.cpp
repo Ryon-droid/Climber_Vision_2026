@@ -8,8 +8,24 @@ using namespace std::chrono_literals;
 
 namespace io
 {
-  HikRobot::HikRobot(double exposure_ms, double gain, const std::string &vid_pid)
-      : exposure_us_(exposure_ms * 1e3), gain_(gain),queue_(1), daemon_quit_(false) , vid_(-1), pid_(-1)
+  namespace
+  {
+
+  std::string to_string_or_empty(const unsigned char * raw)
+  {
+    if (!raw) {
+      return "";
+    }
+    return std::string(reinterpret_cast<const char *>(raw));
+  }
+
+  }  // namespace
+
+  HikRobot::HikRobot(
+    double exposure_ms, double gain, const std::string & vid_pid,
+    const std::string & user_id, const std::string & serial_number)
+      : exposure_us_(exposure_ms * 1e3), gain_(gain), queue_(1), daemon_quit_(false), vid_(-1), pid_(-1),
+        user_id_(user_id), serial_number_(serial_number)
   {
     set_vid_pid(vid_pid);
     if (libusb_init(NULL)) tools::logger()->warn("Unable to init libusb!");
@@ -73,7 +89,25 @@ void HikRobot::capture_start()
     return;
   }
 
-  ret = MV_CC_CreateHandle(&handle_, device_list.pDeviceInfo[0]);
+  MV_CC_DEVICE_INFO * matched_device = nullptr;
+  for (unsigned int i = 0; i < device_list.nDeviceNum; ++i) {
+    auto * device_info = device_list.pDeviceInfo[i];
+    if (match_device_info(device_info)) {
+      matched_device = device_info;
+      break;
+    }
+  }
+
+  if (!matched_device) {
+    tools::logger()->warn(
+      "No matched HikRobot camera found. vid_pid={}, user_id={}, serial_number={}",
+      fmt::format("{:04x}:{:04x}", vid_, pid_),
+      user_id_,
+      serial_number_);
+    return;
+  }
+
+  ret = MV_CC_CreateHandle(&handle_, matched_device);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_CreateHandle failed: {:#x}", ret);
     return;
@@ -82,6 +116,7 @@ void HikRobot::capture_start()
   ret = MV_CC_OpenDevice(handle_);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_OpenDevice failed: {:#x}", ret);
+    release_handle();
     return;
   }
 
@@ -95,6 +130,7 @@ void HikRobot::capture_start()
   ret = MV_CC_StartGrabbing(handle_);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_StartGrabbing failed: {:#x}", ret);
+    release_handle();
     return;
   }
 
@@ -182,31 +218,36 @@ void HikRobot::capture_stop()
   capture_quit_ = true;
   if (capture_thread_.joinable()) capture_thread_.join();
 
-  unsigned int ret;
+  if (!handle_) {
+    capturing_ = false;
+    return;
+  }
 
-  ret = MV_CC_StopGrabbing(handle_);
+  unsigned int ret = MV_CC_StopGrabbing(handle_);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_StopGrabbing failed: {:#x}", ret);
-    return;
   }
 
   ret = MV_CC_CloseDevice(handle_);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_CloseDevice failed: {:#x}", ret);
+  }
+
+  release_handle();
+  capturing_ = false;
+}
+
+void HikRobot::release_handle()
+{
+  if (!handle_) {
     return;
   }
 
-  ret = MV_CC_DestroyHandle(handle_);
+  const unsigned int ret = MV_CC_DestroyHandle(handle_);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_DestroyHandle failed: {:#x}", ret);
-    return;
   }
-  if (ret != MV_OK)
-  {
-    tools::logger()->warn("MV_CC_DestroyHandle failed: {:#x}", ret);
-    return;
-  }
-  handle_ = nullptr; // 成功销毁后置空
+  handle_ = nullptr;
 }
 
 void HikRobot::set_float_value(const std::string & name, double value)
@@ -250,6 +291,42 @@ void HikRobot::set_vid_pid(const std::string & vid_pid)
   } catch (const std::exception &) {
     tools::logger()->warn("Invalid vid_pid: \"{}\"", vid_pid);
   }
+}
+
+bool HikRobot::match_device_info(const MV_CC_DEVICE_INFO * device_info) const
+{
+  if (!device_info) {
+    return false;
+  }
+
+  if (device_info->nTLayerType != MV_USB_DEVICE) {
+    return false;
+  }
+
+  const auto & info = device_info->SpecialInfo.stUsb3VInfo;
+  if (vid_ != -1 && info.idVendor != static_cast<unsigned short>(vid_)) {
+    return false;
+  }
+  if (pid_ != -1 && info.idProduct != static_cast<unsigned short>(pid_)) {
+    return false;
+  }
+
+  const auto device_user_id = to_string_or_empty(info.chUserDefinedName);
+  const auto device_serial = to_string_or_empty(info.chSerialNumber);
+
+  if (!user_id_.empty() && user_id_ != device_user_id) {
+    return false;
+  }
+  if (!serial_number_.empty() && serial_number_ != device_serial) {
+    return false;
+  }
+
+  tools::logger()->info(
+    "Matched HikRobot camera: user_id='{}', serial='{}', device_no={}",
+    device_user_id,
+    device_serial,
+    info.nDeviceNumber);
+  return true;
 }
 
 void HikRobot::reset_usb() const

@@ -282,21 +282,26 @@ void Gimbal::read_thread()
     state_.pitch_vel = rx_data_.pitch_vel;
     state_.bullet_count = rx_data_.bullet_count;
 
+    auto new_mode = GimbalMode::IDLE;
     switch (rx_data_.mode) {
       case 0:
-        mode_ = GimbalMode::IDLE;
+        new_mode = GimbalMode::IDLE;
         break;
       case 1:
-        mode_ = GimbalMode::AUTO_AIM;
+        new_mode = GimbalMode::AUTO_AIM;
         break;
       case 2:
-        mode_ = GimbalMode::LOBSHOT;
+        new_mode = GimbalMode::LOBSHOT;
         break;
       default:
-        mode_ = GimbalMode::IDLE;
+        new_mode = GimbalMode::IDLE;
         tools::logger()->warn("[Gimbal] Invalid mode: {}", rx_data_.mode);
         break;
     }
+    if (new_mode != mode_) {
+      tools::logger()->info("[Gimbal] RX mode: {} -> {}", str(mode_), str(new_mode));
+    }
+    mode_ = new_mode;
   }
 
   tools::logger()->info("[Gimbal] read_thread stopped.");
