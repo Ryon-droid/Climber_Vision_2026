@@ -1,8 +1,9 @@
-# enemy_color: "red"
-enemy_color: "blue"
+enemy_color: "red"
+# enemy_color: "blue"
 
 # 机器人类型配置（hero或其他）
 robot_type: "hero"  # hero为英雄机器人，其他为普通机器人
+enable_lobshot: false  # 只接自瞄设备调试时关闭吊射链路
 
 #####-----神经网络参数-----#####
 yolo_name: yolov8
@@ -11,8 +12,8 @@ yolo11_model_path: assets/yolo11.xml
 yolov8_model_path: assets/yolov8.xml
 yolov5_model_path: assets/yolov5.xml
 device: GPU
-min_confidence: 0.65 #0.8 #原检测阈值
-use_traditional: false
+min_confidence: 0.8 #0.8 #原检测阈值
+use_traditional: true
 
 #####-----ROI-----#####
 roi: 
@@ -38,7 +39,7 @@ max_rectangular_error: 25 # degree
 #####-----tracker参数-----#####
 min_detect_count: 5               #追踪检测次数阈值
 max_temp_lost_count: 15           #装甲板最大丢失帧数
-outpost_max_temp_lost_count: 35   #前哨站最大丢失帧数
+outpost_max_temp_lost_count: 60   #前哨站最大丢失帧数
 priority_mode: 1
 target_switch_strategy: "priority"
 target_switch_confirm_frames: 2
@@ -68,8 +69,8 @@ exit_frame_threshold: 10 # 连续N帧低于阈值才退出
 # 自瞄相机：用于 auto aim
 aim_camera:
   camera_name: "hikrobot"
-  exposure_ms: 2
-  gain: 12
+  exposure_ms: 3
+  gain: 13
   vid_pid: "2bdf:0001"
   user_id: "hero_aim"      # 推荐使用海康相机自定义名称区分
   # serial_number: ""
@@ -101,7 +102,7 @@ distort_coeffs: [-0.033496948861302278, 0.1820578517683564, 0.000974021773975797
 # 相机同理想情况的偏角: yaw0.50 pitch-3.14 roll0.36 degree
 # 标定板到世界原点水平距离: 1.69 m
 # 标定板同竖直摆放时的偏角: yaw-20.79 pitch6.59 roll-1.86 degree
-R_camera2gimbal: [-0.00740752, -0.0808135, 0.996702, -0.999953, 0.0067593, -0.00688363, -0.00618072, -0.996706, -0.0808598]
+R_camera2gimbal: [0.0358943, -0.133049, 0.990459, -0.999337, 0.00131654, 0.0363929, -0.00614601, -0.991109, -0.132914]
 t_camera2gimbal: [0.229862, -0.0180265, -0.0643407]
 
 #####-----gimbal参数-----#####
@@ -111,11 +112,11 @@ speed_control: true
 bullet_speed: 11.0  # m/s
 
 #####-----planner-----#####
-fire_thresh: 0.0035
+fire_thresh: 0.0045
 fire_yaw_tolerance: 1.5
 fire_pitch_tolerance: 1.5
 
-max_yaw_acc: 15  #10
+max_yaw_acc: 10  #10
 Q_yaw: [9e5, 0]
 R_yaw: [3]
 

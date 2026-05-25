@@ -86,6 +86,14 @@ Hero 主程序：
 ./build/hero configs/hero.yaml
 ```
 
+如果当前只接了自瞄相机和主串口，可以在 `configs/hero.yaml` 中设置：
+
+```yaml
+enable_lobshot: false
+```
+
+这样 `hero` 会完全跳过吊射相机和吊射第二串口，只保留自瞄流程。
+
 其他常用测试：
 
 ```bash

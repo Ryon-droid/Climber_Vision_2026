@@ -44,6 +44,8 @@ int main(int argc, char * argv[])
   }
   auto config_path = parser.get<std::string>(0);
   auto yaml = tools::load(config_path);
+  const bool enable_lobshot =
+    yaml["enable_lobshot"] ? yaml["enable_lobshot"].as<bool>() : true;
   const auto lobshot_config_path =
     (std::filesystem::path(config_path).parent_path() / "lobshot.yaml").string();
 
@@ -53,10 +55,15 @@ int main(int argc, char * argv[])
 
   std::unique_ptr<io::Camera> aim_camera;
   io::Gimbal gimbal(config_path);
-  lobshot::Lobshot lobshot_sender(lobshot_config_path);
+  std::unique_ptr<lobshot::Lobshot> lobshot_sender;
+  if (enable_lobshot) {
+    lobshot_sender = std::make_unique<lobshot::Lobshot>(lobshot_config_path);
+  } else {
+    tools::logger()->info("[Hero] Lobshot disabled by config. Running auto aim only.");
+  }
   std::unique_ptr<io::Camera> lobshot_camera;
 
-  auto use_tradition = tools::read<bool>(yaml, "use_traditional");
+  // auto use_tradition = tools::read<bool>(yaml, "use_traditional");
   const double fire_yaw_tolerance =
     (yaml["fire_yaw_tolerance"] ? yaml["fire_yaw_tolerance"].as<double>() : 1.0) / 57.3;
   const double fire_pitch_tolerance =
@@ -73,6 +80,20 @@ int main(int argc, char * argv[])
   target_queue.push(std::nullopt);
 
   std::atomic<bool> quit = false;
+  bool lobshot_mode_ignored_warned = false;
+  auto resolve_mode = [&](io::GimbalMode mode) {
+    if (enable_lobshot || mode != io::GimbalMode::LOBSHOT) {
+      return mode;
+    }
+
+    if (!lobshot_mode_ignored_warned) {
+      tools::logger()->warn(
+        "[Hero] Received LOBSHOT mode while enable_lobshot=false. Staying in AUTO_AIM.");
+      lobshot_mode_ignored_warned = true;
+    }
+    return io::GimbalMode::AUTO_AIM;
+  };
+
   auto plan_thread = std::thread([&]() {
     auto t0 = std::chrono::steady_clock::now();
     uint16_t last_bullet_count = 0;
@@ -80,7 +101,7 @@ int main(int argc, char * argv[])
     while (!quit) {
       auto target_opt = target_queue.front();
       auto gs = gimbal.state();
-      auto gimbal_mode = gimbal.mode();
+      auto gimbal_mode = resolve_mode(gimbal.mode());
 
       if (gimbal_mode == io::GimbalMode::LOBSHOT) {
         gimbal.send(false, false, 0, 0, 0, 0, 0, 0);
@@ -125,15 +146,25 @@ int main(int argc, char * argv[])
       data["plan_pitch_vel"] = plan.pitch_vel;
       data["fire"] = fire_closed_loop ? 1 : 0;
       data["fire_request"] = plan.fire ? 1 : 0;
+      data["fire_error"] = plan.fire_error;
+      data["fire_error_threshold"] = plan.fire_error_threshold;
+      data["fire_target_distance"] = plan.fire_target_distance;
       data["fire_yaw_err"] = fire_yaw_err * 57.3;
       data["fire_pitch_err"] = fire_pitch_err * 57.3;
       data["fired"] = fired ? 1 : 0;
 
+      double target_distance = 0.0;
       if (target_opt.has_value()) {
         const auto x = target_opt->ekf_x();
         data["w"] = x[7];
         data["v"] = std::sqrt(x[1] * x[1] + x[3] * x[3]);
-        data["distance"] = std::sqrt(x[0] * x[0] + x[2] * x[2] + x[4] * x[4]);
+        target_distance = std::sqrt(x[0] * x[0] + x[2] * x[2] + x[4] * x[4]);
+        data["distance"] = target_distance;
+        tools::logger()->debug(
+          "[Hero] distance: {:.3f} m, fire_target_distance: {:.3f} m, fire_request: {}, fire: {}, "
+          "fire_error: {:.4f}, fire_threshold: {:.4f}",
+          target_distance, plan.fire_target_distance, plan.fire ? 1 : 0, fire_closed_loop ? 1 : 0,
+          plan.fire_error, plan.fire_error_threshold);
       } else {
         data["w"] = 0.0;
         data["v"] = 0.0;
@@ -161,7 +192,7 @@ int main(int argc, char * argv[])
   };
 
   while (!exiter.exit()) {
-    const auto gimbal_mode = gimbal.mode();
+    const auto gimbal_mode = resolve_mode(gimbal.mode());
     if (gimbal_mode == io::GimbalMode::LOBSHOT) {
       if (aim_camera) {
         tools::logger()->info("[Hero] Releasing aim camera after entering lobshot mode.");
@@ -189,11 +220,11 @@ int main(int argc, char * argv[])
     recorder.record(img, q, t);
 
     if (gimbal_mode == io::GimbalMode::LOBSHOT) {
-      lobshot_sender.set_enabled(true);
-      lobshot_sender.process(img, t);
+      lobshot_sender->set_enabled(true);
+      lobshot_sender->process(img, t);
       target_queue.push(std::nullopt);
 
-      auto draw_img = lobshot_sender.debug_frame();
+      auto draw_img = lobshot_sender->debug_frame();
       if (draw_img.empty()) {
         draw_img = img.clone();
       }
@@ -206,13 +237,15 @@ int main(int argc, char * argv[])
       continue;
     }
 
-    lobshot_sender.set_enabled(false);
+    if (lobshot_sender) {
+      lobshot_sender->set_enabled(false);
+    }
 
     auto last = std::chrono::steady_clock::now();
     solver.set_R_gimbal2world(q);
     Eigen::Vector3d gimbal_pos = tools::eulers(solver.R_gimbal2world(), 2, 1, 0);
 
-    auto armors = use_tradition ? detector.detect(img) : yolo.detect(img);
+    auto armors = yolo.detect(img);
     auto draw_img = img.clone();
     for (const auto & armor : armors) {
       tools::draw_text(
@@ -268,7 +301,9 @@ int main(int argc, char * argv[])
 
   quit = true;
   if (plan_thread.joinable()) plan_thread.join();
-  lobshot_sender.set_enabled(false);
+  if (lobshot_sender) {
+    lobshot_sender->set_enabled(false);
+  }
   gimbal.send(false, false, 0, 0, 0, 0, 0, 0);
 
   return 0;

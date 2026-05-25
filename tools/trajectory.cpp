@@ -76,10 +76,21 @@ double BallisticSolver::solveYawAngle(double x, double y) {
     return std::atan(-x / y);
 }
 
-double BallisticSolver::calculateFlightTime(double distance, double pitchAngle) {
+double BallisticSolver::calculateFlightTime(double distance, double pitchAngle) const {
     // Calculate flight time considering air resistance
     // Uses exponential air resistance model
     return (std::exp(dragCoeff_ * distance) - 1) / (dragCoeff_ * speed_ * std::cos(pitchAngle));
+}
+
+double BallisticSolver::calculateHeight(double distance, double pitchAngle) const {
+    const double flyTime = calculateFlightTime(distance, pitchAngle);
+    const double cos_pitch = std::cos(pitchAngle);
+    if (std::fabs(cos_pitch) < 1e-6) {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    return speed_ * std::sin(pitchAngle) * flyTime / cos_pitch -
+           0.5 * gravity_ * flyTime * flyTime / (cos_pitch * cos_pitch);
 }
 
 double BallisticSolver::getShootSpeed() const {

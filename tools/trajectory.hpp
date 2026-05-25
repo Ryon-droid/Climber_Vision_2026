@@ -36,12 +36,13 @@ public:
     
     GimbalPose solveGimbalPose(cv::Point3d shootTarget);
     
+    double calculateHeight(double distance, double pitchAngle) const;
     double getShootSpeed() const;
     double getDragCoefficient() const;
     double getGravity() const;
 
 public:
-    double calculateFlightTime(double distance, double pitchAngle);
+    double calculateFlightTime(double distance, double pitchAngle) const;
 private:
     double solvePitchAngle(double distance, double deltaZ);
     double solveYawAngle(double x, double y);

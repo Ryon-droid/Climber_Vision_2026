@@ -15,7 +15,7 @@
 namespace auto_aim
 {
   YOLOV8::YOLOV8(const std::string &config_path, bool debug)
-  : debug_(debug),classifier_(config_path)//, detector_(config_path)
+  : debug_(debug),classifier_(config_path), detector_(config_path, false)
   {
     auto yaml = YAML::LoadFile(config_path);
 
@@ -29,6 +29,7 @@ namespace auto_aim
     width = yaml["roi"]["width"].as<int>();
     height = yaml["roi"]["height"].as<int>();
     use_roi_ = yaml["use_roi"].as<bool>();
+    use_traditional_ = yaml["use_traditional"].as<bool>();
     roi_ = cv::Rect(x, y, width, height);
     offset_ = cv::Point2f(x, y);
 
@@ -175,6 +176,9 @@ std::list<Armor> YOLOV8::parse(
       continue;
     }
 
+    //使用传统方法二次矫正角点
+    if (use_traditional_) detector_.detect(*it, bgr_img);
+
     it->center_norm = get_center_norm(bgr_img, it->center);
     ++it;
   }
@@ -198,9 +202,9 @@ bool YOLOV8::check_name(const Armor & armor) const
 bool YOLOV8::check_type(const Armor & armor) const
 {
   auto name_ok = (armor.type == ArmorType::small)
-                   ? (armor.name != ArmorName::one && armor.name != ArmorName::base)
+                   ? (armor.name != ArmorName::one )
                    : (armor.name != ArmorName::two && armor.name != ArmorName::sentry &&
-                      armor.name != ArmorName::outpost);
+                      armor.name != ArmorName::outpost && armor.name != ArmorName::base);
 
   // 保存异常的图案，用于分类器的迭代
   // if (!name_ok) save(armor);
