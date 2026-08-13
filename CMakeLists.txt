@@ -12,7 +12,7 @@ find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
-set(OpenVINO_DIR "/opt/intel/openvino_2025.3.0/runtime/cmake/")
+set(OpenVINO_DIR "/opt/intel/openvino_2025.4.0/runtime/cmake/")
 find_package(OpenVINO REQUIRED)
 
 include_directories(${EIGEN3_INCLUDE_DIR})
@@ -66,6 +66,7 @@ add_executable(handeye_test test/handeye_test.cpp)
 add_executable(cboard_test test/Cboard_test.cpp)
 add_executable(gimbal_response_test test/gimbal_response_test.cpp)
 add_executable(gimbal_comm_test test/gimbal_comm_test.cpp)
+add_executable(video_replay_test test/video_replay_test.cpp)
 
 target_link_libraries(aim_detect_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 target_link_libraries(auto_aim_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
@@ -76,6 +77,7 @@ target_link_libraries(handeye_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim too
 target_link_libraries(cboard_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 target_link_libraries(gimbal_response_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 target_link_libraries(gimbal_comm_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)
+target_link_libraries(video_replay_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 
 ###auto_buff test
 

@@ -146,11 +146,11 @@ io::Command Aimer::aim(
   double yaw;
   double pitch;
   if (is_spinning_top_ && target.name != ArmorName::outpost) {
-    yaw = center_yaw_ + yaw_offset_;
+    yaw = tools::limit_rad(center_yaw_ + yaw_offset_);
     pitch = -(current_traj.pitch + pitch_offset_);
   } else {
     // 前哨站始终跟随指定装甲板的实际方位，不在高速旋转时切回中心锁车。
-    yaw = std::atan2(final_xyz.y(), final_xyz.x()) + yaw_offset_;
+    yaw = tools::limit_rad(std::atan2(final_xyz.y(), final_xyz.x()) + yaw_offset_);
     pitch = -(current_traj.pitch + pitch_offset_);
   }
 
@@ -192,7 +192,13 @@ AimPoint Aimer::choose_aim_point(const Target & target)
 
   auto armor_num = armor_xyza_list.size();
   // 如果装甲板未发生过跳变，则只有当前装甲板的位置已知
-  if (!target.jumped) return {true, armor_xyza_list[0]};
+  if (!target.jumped) {
+    // 前哨站：优先使用 target.cpp 里动态锁定的主打击面，而不是任意一块可见装甲板
+    if (target.name == ArmorName::outpost && target.has_primary_armor_xyza()) {
+      return {true, target.primary_armor_xyza()};
+    }
+    return {true, armor_xyza_list[0]};
+  }
 
   // 整车旋转中心的球坐标yaw
   auto center_yaw = std::atan2(ekf_x[2], ekf_x[0]);

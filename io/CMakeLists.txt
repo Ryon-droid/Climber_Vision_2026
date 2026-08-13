@@ -12,6 +12,7 @@ add_library(io STATIC
     usbcamera/usbcamera.cpp  
     camera.cpp
     cboard.cpp
+    serial_link.cpp
     # # dm_imu/dm_imu.cpp
     gimbal/gimbal.cpp
     lobshot/lobshot_comm.cpp

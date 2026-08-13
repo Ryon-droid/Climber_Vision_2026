@@ -1,7 +1,6 @@
 #include "cboard.hpp"
 
-#include <numeric>
-
+#include "io/serial_link.hpp"
 #include "tools/math_tools.hpp"
 #include "tools/yaml.hpp"
 #include "tools/logger.hpp"
@@ -20,16 +19,7 @@ namespace io
     speed_control = tools::read<bool>(yaml, "speed_control");
     bullet_speed_config = tools::read<double>(yaml, "bullet_speed");
     try{
-      serial_.setPort(com_port);
-      serial_.setBaudrate(115200);
-      serial_.setFlowcontrol(serial::flowcontrol_none);
-      serial_.setParity(serial::parity_none);
-      serial_.setStopbits(serial::stopbits_one);
-      serial_.setBytesize(serial::eightbits);
-      serial::Timeout time_out=serial::Timeout::simpleTimeout(20);
-      serial_.setTimeout(time_out);
-      serial_.open();
-      usleep(1000000); // 1s wait
+      io::open_serial_blocking(serial_, com_port, 115200);
     }
     catch (const std::exception &e)
     {
@@ -136,44 +126,12 @@ namespace io
 
   bool CBoard::read(uint8_t *buffer, size_t size)
   {
-    try
-    {
-      return serial_.read(buffer, size) == size;
-    }
-    catch (const std::exception &e)
-    {
-      return false;
-    }
+    return io::read_exact(serial_, buffer, size);
   }
 
   void CBoard::reconnect()
   {
-    int max_retry_count = 10;
-    for (int i = 0; i < max_retry_count && !quit_; ++i)
-    {
-      tools::logger()->warn("[Cboard] Reconnecting serial, attempt {}/{}...", i + 1, max_retry_count);
-      try
-      {
-        serial_.close();
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-      }
-      catch (...)
-      {
-      }
-
-      try
-      {
-        serial_.open();
-        queue_.clear();
-        tools::logger()->info("[Cboard] Reconnected serial successfully.");
-        break;
-      }
-      catch (const std::exception &e)
-      {
-        tools::logger()->warn("[Cboard] Reconnect failed: {}", e.what());
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-      }
-    }
+    io::reconnect_serial(serial_, quit_, "[Cboard]", [this] { queue_.clear(); });
   }
 
   void CBoard::read_thread()
@@ -234,48 +192,24 @@ namespace io
       auto roll_ = rx_data_.roll;
       // tools::logger()->debug("[Cboard] Received data: yaw={.02f}, pitch={.02f}, roll={.02f}", yaw_, pitch_, roll_);
 
-      // 从欧拉角转换为四元数（ZYX顺序：yaw-pitch-roll）
-      Eigen::Quaterniond q_from_euler = 
-          (Eigen::AngleAxisd(yaw_, Eigen::Vector3d::UnitZ()) *
-          Eigen::AngleAxisd(pitch_, Eigen::Vector3d::UnitY()) *
-          Eigen::AngleAxisd(roll_, Eigen::Vector3d::UnitX())).normalized();
-      
-      auto x = q_from_euler.x();
-      auto y = q_from_euler.y();
-      auto z = q_from_euler.z();
-      auto w = q_from_euler.w();
-      // tools::logger()->debug("[Cboard] IMU Quaternion: w={}, x={}, y={}, z={}", w, x, y, z);
-
-      
-      // 四元数有效性检查
-      if (std::isnan(x) || std::isnan(y) || std::isnan(z) || std::isnan(w))
-      {
-        tools::logger()->warn("[Cboard] Invalid q: NaN detected - w={}, x={}, y={}, z={}", w, x, y, z);
-      }
-      else if (std::abs(x * x + y * y + z * z + w * w - 1) > 1e-2)
-      {
-        tools::logger()->warn("[Cboard] Invalid q: magnitude check failed - w={}, x={}, y={}, z={}", w, x, y, z);
-      }
-      else
-      {
-        queue_.push({{ w, x, y, z}, t});
+      if (!io::euler_angles_sane(yaw_, pitch_, roll_, "[Cboard]")) {
+        continue;
       }
 
+      // 从欧拉角转换为四元数（ZYX顺序：yaw-pitch-roll），并做有效性检查
+      auto q_from_euler = io::decode_euler_quaternion(yaw_, pitch_, roll_, "[Cboard]");
+      if (q_from_euler) {
+        queue_.push({{q_from_euler->w(), q_from_euler->x(), q_from_euler->y(), q_from_euler->z()}, t});
+      }
 
-
-      if(speed_control) 
-      { 
+      if(speed_control)
+      {
         // 更新状态变量 (对应原 bullet_speed_canid_ 接收逻辑)
         bullet_speed = rx_data_.bullet_speed;
 
         // 滑动窗口：只有有效弹速且与前一个值不同时才加入窗口
         if (bullet_speed > 0) {
-          if (bullet_speed_window_.empty() || bullet_speed != bullet_speed_window_.back()) {
-            bullet_speed_window_.push_back(bullet_speed);
-            if (bullet_speed_window_.size() > BULLET_SPEED_WINDOW_SIZE) {
-              bullet_speed_window_.pop_front();
-            }
-          }
+          bullet_speed_filter_.push(static_cast<float>(bullet_speed));
         }
 
         mode = Mode(rx_data_.mode);
@@ -308,11 +242,10 @@ namespace io
 
   double CBoard::get_average_bullet_speed() const
   {
-    if (bullet_speed_window_.empty()) {
+    if (bullet_speed_filter_.empty()) {
       return bullet_speed_config;
     }
-    double sum = std::accumulate(bullet_speed_window_.begin(), bullet_speed_window_.end(), 0.0);
-    return sum / bullet_speed_window_.size();
+    return bullet_speed_filter_.average();
   }
 
 }  // namespace io

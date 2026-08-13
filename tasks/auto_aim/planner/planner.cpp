@@ -18,6 +18,12 @@ Eigen::Vector4d select_planner_xyza(const Target & target)
   const auto armor_xyza_list = target.armor_xyza_list();
   if (armor_xyza_list.empty()) return Eigen::Vector4d::Zero();
 
+  // 前哨站：优先用 target.cpp 动态锁定的主打击面，和 Aimer/Shooter 保持一致，
+  // 而不是每帧都重新挑"当前离得最近"的那一面。
+  if (target.name == ArmorName::outpost && target.has_primary_armor_xyza()) {
+    return target.primary_armor_xyza();
+  }
+
   auto best_xyza = armor_xyza_list.front();
   auto min_dist = std::numeric_limits<double>::infinity();
   for (const auto & xyza : armor_xyza_list) {

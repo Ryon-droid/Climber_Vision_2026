@@ -1,7 +1,6 @@
 #ifndef IO__CBOARD_HPP
 #define IO__CBOARD_HPP
 
-#include <deque>
 #include <Eigen/Geometry>
 #include <chrono>
 #include <cmath>
@@ -14,6 +13,7 @@
 
 #include "io/command.hpp"
 #include "serial/serial.h"
+#include "tools/bullet_speed_filter.hpp"
 #include "tools/logger.hpp"
 #include "tools/thread_safe_queue.hpp"
 
@@ -93,8 +93,7 @@ private:
   std::thread thread_;
   std::atomic<bool> quit_=false;
 
-  static constexpr int BULLET_SPEED_WINDOW_SIZE = 3;
-  std::deque<double> bullet_speed_window_;
+  tools::BulletSpeedFilter bullet_speed_filter_{3};
 
   IMUData data_ahead_;
   IMUData data_behind_;

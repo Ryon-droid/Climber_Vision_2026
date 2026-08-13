@@ -3,7 +3,6 @@
 
 #include <Eigen/Geometry>
 #include <atomic>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <mutex>
@@ -13,6 +12,7 @@
 
 #include "serial/serial.h"
 #include "tasks/auto_aim/solver.hpp"
+#include "tools/bullet_speed_filter.hpp"
 #include "tools/thread_safe_queue.hpp"
 
 namespace io
@@ -81,8 +81,6 @@ public:
     bool control, bool fire, float yaw, float yaw_vel, float yaw_acc, float pitch, float pitch_vel,
     float pitch_acc);
 
-  void send(io::VisionToGimbal VisionToGimbal);
-
 private:
   serial::Serial serial_;
 
@@ -101,11 +99,7 @@ private:
   bool speed_control_ = false;
   double bullet_speed_config_ = 0.0;
   bool auto_fire_ = false;
-  std::array<float, 3> bullet_speed_samples_ = {0.0F, 0.0F, 0.0F};
-  size_t bullet_speed_sample_count_ = 0;
-  size_t bullet_speed_sample_index_ = 0;
-  float last_bullet_speed_sample_ = 0.0F;
-  bool has_last_bullet_speed_sample_ = false;
+  tools::BulletSpeedFilter bullet_speed_filter_{3};
 
   auto_aim::Solver solver_;
 

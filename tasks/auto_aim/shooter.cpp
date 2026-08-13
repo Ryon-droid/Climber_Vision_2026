@@ -8,11 +8,6 @@
 
 namespace auto_aim
 {
-namespace
-{
-constexpr int kOutpostTargetSlot = 2;
-}
-
 Shooter::Shooter(const std::string & config_path) : last_command_{false, false, 0, 0}
 {
   auto yaml = YAML::LoadFile(config_path);
@@ -80,7 +75,11 @@ bool Shooter::shoot(
     }
 
     if (target.name == ArmorName::outpost) {
-      const auto & target_armor_xyza = armor_xyza_list[kOutpostTargetSlot];
+      // 用 target.cpp 动态锁定的主打击面（与 Aimer::choose_aim_point 保持一致），
+      // 而不是固定槽位号，这样 Hero 依然会稳定锁在同一面上，但锁的是追踪器
+      // 实际判定出的主面，不会和瞄准点各算各的。
+      const auto & target_armor_xyza =
+        target.has_primary_armor_xyza() ? target.primary_armor_xyza() : armor_xyza_list[0];
       double armor_yaw = target_armor_xyza[3];
       double delta_angle = tools::limit_rad(armor_yaw - center_yaw);
       bool is_coming = (target.ekf_x()[7] > 0 && delta_angle < 0) ||
