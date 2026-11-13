@@ -94,9 +94,9 @@ public:
     // 判断是顺时针还是逆时针旋转
     if (abs(cw_ccw) < 100) {
       if (lastangle > angle)
-        cw_ccw -= 1;  // 逆时针
+        cw_ccw -= 1;
       else
-        cw_ccw += 1;  // 顺时针
+        cw_ccw += 1;
     }
 
     // 预测下一个状态

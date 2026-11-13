@@ -5,7 +5,7 @@ namespace io
 {
 struct Command
 {
-  bool control;  // 用于启用/禁用控制
+  bool control;
   bool shoot;
   double yaw;
   double pitch;

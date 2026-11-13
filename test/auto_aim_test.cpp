@@ -11,6 +11,7 @@
 #include "tasks/auto_aim/yolo.hpp"
 #include "tasks/auto_aim/detector.hpp"
 #include "tasks/auto_aim/shooter.hpp"
+#include "tasks/omniperception/armor_selector.hpp"
 #include "tools/exiter.hpp"
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
@@ -20,12 +21,12 @@
 #include "io/camera.hpp"
 
 
-using namespace std::chrono_literals;  // 添加这一行
+using namespace std::chrono_literals; 
 
 const std::string keys =
     "{help h usage ? |      | 输出命令行参数说明 }"
-    "{config-path c  | configs/test_aim.yaml | yaml配置文件的路径}"
-    "{tradition t    | false | 是否使用传统方法识别}";
+    "{tradition t    | false | 是否使用传统方法识别}"
+    "{@config-path   | configs/test_aim.yaml | yaml配置文件的路径}";
 
 int main(int argc, char *argv[])
 {
@@ -36,7 +37,7 @@ int main(int argc, char *argv[])
         return 0;
     }
     
-    auto config_path = cli.get<std::string>("config-path");
+    auto config_path = cli.get<std::string>(0);
     auto yaml = tools::load(config_path);
     auto tradition_detect_ = tools::read<bool>(yaml, "tradition_detect");
     
@@ -53,12 +54,13 @@ int main(int argc, char *argv[])
     auto_aim::Detector detector(config_path, false);
     auto_aim::Solver solver(config_path);
     auto_aim::Tracker tracker(config_path, solver);
-    // auto_aim::Aimer aimer(config_path);
+    auto_aim::Aimer aimer(config_path);
+    omniperception::ArmorSelector armor_selector(config_path);
     // auto_aim::Shooter shooter(config_path);
 
-    // cv::Mat img, drawing;
-    // std::list<auto_aim::Armor> armors;
-    // std::list<auto_aim::Target> targets;
+    cv::Mat img, drawing;
+    std::list<auto_aim::Armor> armors;
+    std::list<auto_aim::Target> targets;
     std::chrono::steady_clock::time_point t;
 
     // Eigen::Quaterniond q;
@@ -69,16 +71,14 @@ int main(int argc, char *argv[])
     double sum_dt_yolo_30 = 0.0;      // 累积最近 30 帧的 YOLO 时间，用于计算 YOLO 平均帧率
     
     io::Camera camera(config_path);
-    // io::CBoard cboard(config_path);
     while (!exiter.exit())
     {   
         cv::Mat img, drawing;
         std::list<auto_aim::Armor> armors;
-
+        std::list<auto_aim::Target> targets;
         camera.read(img, t);
         if (img.empty())
             break;
-        // q = cboard.imu_at(t - 1ms);
 
         auto last = std::chrono::steady_clock::now();
 
@@ -88,10 +88,13 @@ int main(int argc, char *argv[])
         if (tradition_detect_) armors = detector.detect(img);
         else armors = yolo.detect(img);
 
+        armor_selector.armor_filter(armors, omniperception::ArmorFilterScope::MainAim);
+        armor_selector.set_priority(armors);
+
         auto yolo = std::chrono::steady_clock::now();
         // cv::Mat draw_img = img.clone();
        
-        auto targets = tracker.track(armors, t);
+        targets = tracker.track(armors, t);
 
         auto track = std::chrono::steady_clock::now();
 

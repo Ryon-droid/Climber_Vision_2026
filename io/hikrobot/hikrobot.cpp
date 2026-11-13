@@ -8,24 +8,8 @@ using namespace std::chrono_literals;
 
 namespace io
 {
-  namespace
-  {
-
-  std::string to_string_or_empty(const unsigned char * raw)
-  {
-    if (!raw) {
-      return "";
-    }
-    return std::string(reinterpret_cast<const char *>(raw));
-  }
-
-  }  // namespace
-
-  HikRobot::HikRobot(
-    double exposure_ms, double gain, const std::string & vid_pid,
-    const std::string & user_id, const std::string & serial_number)
-      : exposure_us_(exposure_ms * 1e3), gain_(gain), queue_(1), daemon_quit_(false), vid_(-1), pid_(-1),
-        user_id_(user_id), serial_number_(serial_number)
+  HikRobot::HikRobot(double exposure_ms, double gain, const std::string &vid_pid)
+      : exposure_us_(exposure_ms * 1e3), gain_(gain),queue_(1), daemon_quit_(false) , vid_(-1), pid_(-1)
   {
     set_vid_pid(vid_pid);
     if (libusb_init(NULL)) tools::logger()->warn("Unable to init libusb!");
@@ -36,16 +20,27 @@ namespace io
 
                                    capture_start();
 
+                                     int backoff = 0;
                                    while (!daemon_quit_)
                                    {
                                      std::this_thread::sleep_for(100ms);
 
                                      if (capturing_)
+                                     {
+                                       backoff = 0;
                                        continue;
+                                     }
+
+                                     // 退避：没相机时等 2 秒再重试，避免刷日志
+                                     if (backoff > 0) {
+                                       backoff--;
+                                       continue;
+                                     }
 
                                      capture_stop();
                                      reset_usb();
                                      capture_start();
+                                     if (!capturing_) backoff = 20;
                                    }
 
                                    capture_stop();
@@ -89,25 +84,7 @@ void HikRobot::capture_start()
     return;
   }
 
-  MV_CC_DEVICE_INFO * matched_device = nullptr;
-  for (unsigned int i = 0; i < device_list.nDeviceNum; ++i) {
-    auto * device_info = device_list.pDeviceInfo[i];
-    if (match_device_info(device_info)) {
-      matched_device = device_info;
-      break;
-    }
-  }
-
-  if (!matched_device) {
-    tools::logger()->warn(
-      "No matched HikRobot camera found. vid_pid={}, user_id={}, serial_number={}",
-      fmt::format("{:04x}:{:04x}", vid_, pid_),
-      user_id_,
-      serial_number_);
-    return;
-  }
-
-  ret = MV_CC_CreateHandle(&handle_, matched_device);
+  ret = MV_CC_CreateHandle(&handle_, device_list.pDeviceInfo[0]);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_CreateHandle failed: {:#x}", ret);
     return;
@@ -116,7 +93,6 @@ void HikRobot::capture_start()
   ret = MV_CC_OpenDevice(handle_);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_OpenDevice failed: {:#x}", ret);
-    release_handle();
     return;
   }
 
@@ -130,7 +106,6 @@ void HikRobot::capture_start()
   ret = MV_CC_StartGrabbing(handle_);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_StartGrabbing failed: {:#x}", ret);
-    release_handle();
     return;
   }
 
@@ -176,28 +151,9 @@ void HikRobot::capture_start()
         {PixelType_Gvsp_BayerGR8, cv::COLOR_BayerGR2RGB},
         {PixelType_Gvsp_BayerRG8, cv::COLOR_BayerRG2RGB},
         {PixelType_Gvsp_BayerGB8, cv::COLOR_BayerGB2RGB},
-        {PixelType_Gvsp_BayerBG8, cv::COLOR_BayerBG2RGB},
-        {PixelType_Gvsp_BayerGB10, cv::COLOR_BayerGB2RGB},
-        {PixelType_Gvsp_BayerBG10, cv::COLOR_BayerBG2RGB},
-        {PixelType_Gvsp_BayerGR10, cv::COLOR_BayerGR2RGB},
-        {PixelType_Gvsp_BayerRG10, cv::COLOR_BayerRG2RGB},
-        {PixelType_Gvsp_Mono8, cv::COLOR_GRAY2BGR},
-        {PixelType_Gvsp_Mono10, cv::COLOR_GRAY2BGR},
-        {PixelType_Gvsp_Mono12, cv::COLOR_GRAY2BGR}};
-      
-      auto it = type_map.find(pixel_type);
-      if (it != type_map.end()) {
-        cv::cvtColor(img, dst_image, it->second);
-        img = dst_image;
-      } else if (pixel_type == PixelType_Gvsp_RGB8_Packed) {
-        // RGB8_Packed 已经是 RGB 格式，转为 BGR
-        cv::cvtColor(img, dst_image, cv::COLOR_RGB2BGR);
-        img = dst_image;
-      } else {
-        tools::logger()->warn("Unsupported pixel type: {:#x}, trying BGR8 conversion", pixel_type);
-        cv::cvtColor(img, dst_image, cv::COLOR_BayerBG2BGR);
-        img = dst_image;
-      }
+        {PixelType_Gvsp_BayerBG8, cv::COLOR_BayerBG2RGB}};
+      cv::cvtColor(img, dst_image, type_map.at(pixel_type));
+      img = dst_image;
 
       queue_.push({img, timestamp});
 
@@ -218,36 +174,31 @@ void HikRobot::capture_stop()
   capture_quit_ = true;
   if (capture_thread_.joinable()) capture_thread_.join();
 
-  if (!handle_) {
-    capturing_ = false;
-    return;
-  }
+  unsigned int ret;
 
-  unsigned int ret = MV_CC_StopGrabbing(handle_);
+  ret = MV_CC_StopGrabbing(handle_);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_StopGrabbing failed: {:#x}", ret);
+    return;
   }
 
   ret = MV_CC_CloseDevice(handle_);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_CloseDevice failed: {:#x}", ret);
-  }
-
-  release_handle();
-  capturing_ = false;
-}
-
-void HikRobot::release_handle()
-{
-  if (!handle_) {
     return;
   }
 
-  const unsigned int ret = MV_CC_DestroyHandle(handle_);
+  ret = MV_CC_DestroyHandle(handle_);
   if (ret != MV_OK) {
     tools::logger()->warn("MV_CC_DestroyHandle failed: {:#x}", ret);
+    return;
   }
-  handle_ = nullptr;
+  if (ret != MV_OK)
+  {
+    tools::logger()->warn("MV_CC_DestroyHandle failed: {:#x}", ret);
+    return;
+  }
+  handle_ = nullptr; // 成功销毁后置空
 }
 
 void HikRobot::set_float_value(const std::string & name, double value)
@@ -291,42 +242,6 @@ void HikRobot::set_vid_pid(const std::string & vid_pid)
   } catch (const std::exception &) {
     tools::logger()->warn("Invalid vid_pid: \"{}\"", vid_pid);
   }
-}
-
-bool HikRobot::match_device_info(const MV_CC_DEVICE_INFO * device_info) const
-{
-  if (!device_info) {
-    return false;
-  }
-
-  if (device_info->nTLayerType != MV_USB_DEVICE) {
-    return false;
-  }
-
-  const auto & info = device_info->SpecialInfo.stUsb3VInfo;
-  if (vid_ != -1 && info.idVendor != static_cast<unsigned short>(vid_)) {
-    return false;
-  }
-  if (pid_ != -1 && info.idProduct != static_cast<unsigned short>(pid_)) {
-    return false;
-  }
-
-  const auto device_user_id = to_string_or_empty(info.chUserDefinedName);
-  const auto device_serial = to_string_or_empty(info.chSerialNumber);
-
-  if (!user_id_.empty() && user_id_ != device_user_id) {
-    return false;
-  }
-  if (!serial_number_.empty() && serial_number_ != device_serial) {
-    return false;
-  }
-
-  tools::logger()->info(
-    "Matched HikRobot camera: user_id='{}', serial='{}', device_no={}",
-    device_user_id,
-    device_serial,
-    info.nDeviceNumber);
-  return true;
 }
 
 void HikRobot::reset_usb() const

@@ -5,13 +5,10 @@
 #include <Eigen/Dense>  // 必须在opencv2/core/eigen.hpp上面
 #include <Eigen/Geometry>
 #include <chrono>
-#include <functional>
-#include <memory>
 #include <nlohmann/json.hpp>
 #include <opencv2/core/eigen.hpp>
 
 #include "io/camera.hpp"
-#include "io/cboard.hpp"
 #include "io/gimbal/gimbal.hpp"
 #include "tasks/auto_aim/solver.hpp"
 #include "tools/exiter.hpp"
@@ -20,9 +17,8 @@
 
 const std::string keys =
   "{help h usage ? |                     | 输出命令行参数说明}"
-  "{config-path c  | configs/hero.yaml | yaml配置文件路径 }"
-  "{protocol p     | gimbal            | 通信协议: gimbal 或 cboard}"
-  "{d display      |                     | 显示视频流       }";
+  "{d display      |                     | 显示视频流       }"
+  "{@config-path   | configs/sentry.yaml | yaml配置文件路径 }";
 
 // 世界坐标到像素坐标的转换
 
@@ -39,33 +35,16 @@ int main(int argc, char * argv[])
 
   tools::Exiter exiter;
 
-  auto config_path = cli.get<std::string>("config-path");
-  auto protocol = cli.get<std::string>("protocol");
+  auto config_path = cli.get<std::string>(0);
   auto display = cli.has("display");
   auto yaml = YAML::LoadFile(config_path);
   auto height = yaml["height"].as<double>();
   auto grid_num = yaml["grid_num"].as<int>();
   auto grid_size = yaml["grid_size"].as<double>();
   // auto delay = yaml["delay"].as<int>();
+  io::Gimbal gimbal(config_path);
   io::Camera camera(config_path);
   auto_aim::Solver solver(config_path);
-
-  std::function<Eigen::Quaterniond(std::chrono::steady_clock::time_point)> get_imu;
-  std::shared_ptr<io::CBoard> cboard_ptr;
-  std::shared_ptr<io::Gimbal> gimbal_ptr;
-
-  if (protocol == "gimbal") {
-    gimbal_ptr = std::make_shared<io::Gimbal>(config_path);
-    get_imu = [&](auto t) { return gimbal_ptr->q(t); };
-    tools::logger()->info("[handeye_test] 通信协议: Gimbal");
-  } else if (protocol == "cboard") {
-    cboard_ptr = std::make_shared<io::CBoard>(config_path);
-    get_imu = [&](auto t) { return cboard_ptr->imu_at(t); };
-    tools::logger()->info("[handeye_test] 通信协议: CBoard");
-  } else {
-    tools::logger()->error("[handeye_test] 未知协议: {}，请使用 gimbal 或 cboard", protocol);
-    return 1;
-  }
 
   cv::Mat img;
   Eigen::Quaterniond q;
@@ -79,7 +58,7 @@ int main(int argc, char * argv[])
   }
   while (!exiter.exit()) {
     camera.read(img, t);
-    q = get_imu(t - 1ms);
+    q=gimbal.q(t-1ms);
     solver.set_R_gimbal2world(q);
     cv::Mat result = img.clone();
     std::vector<cv::Point2f> projectedPoints = solver.world2pixel(points);

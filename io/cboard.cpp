@@ -1,6 +1,5 @@
 #include "cboard.hpp"
 
-#include "io/serial_link.hpp"
 #include "tools/math_tools.hpp"
 #include "tools/yaml.hpp"
 #include "tools/logger.hpp"
@@ -19,7 +18,20 @@ namespace io
     speed_control = tools::read<bool>(yaml, "speed_control");
     bullet_speed_config = tools::read<double>(yaml, "bullet_speed");
     try{
-      io::open_serial_blocking(serial_, com_port, 115200);
+      serial_.setPort(com_port);
+      int baudrate = 115200;
+      try {
+        baudrate = tools::read<int>(yaml, "baudrate");
+      } catch (...) {}
+      serial_.setBaudrate(baudrate);
+      serial_.setFlowcontrol(serial::flowcontrol_none);
+      serial_.setParity(serial::parity_none);
+      serial_.setStopbits(serial::stopbits_one);
+      serial_.setBytesize(serial::eightbits);
+      serial::Timeout time_out=serial::Timeout::simpleTimeout(20);
+      serial_.setTimeout(time_out);
+      serial_.open();
+      usleep(1000000); // 1s wait
     }
     catch (const std::exception &e)
     {
@@ -55,7 +67,10 @@ namespace io
     if (data_behind_.timestamp < timestamp) data_ahead_ = data_behind_;
 
     while (true) {
-      queue_.pop(data_behind_);
+      if (!queue_.pop_for(data_behind_, std::chrono::milliseconds(1000))) {
+        tools::logger()->warn("[Cboard] imu_at timeout: no IMU data for 1s");
+        return Eigen::Quaterniond::Identity();
+      }
       if (data_behind_.timestamp > timestamp) break;
       data_ahead_ = data_behind_;
     }
@@ -113,25 +128,54 @@ namespace io
     {
       // 通过串口发送
       serial_.write(reinterpret_cast<uint8_t *>(&tx_data), sizeof(tx_data));
-      tools::logger()->debug("[Cboard] Sent command: control={}, shoot={}, yaw={:.4f}, pitch={:.4f}, horizon_distance={:.2f}, bullet_speed={:.2f}, avg_speed={:.2f}",
-                            command.control, command.shoot, (float_t)(command.yaw ), (float_t)(command.pitch), (float_t)command.horizon_distance, bullet_speed, get_average_bullet_speed());
-      // tools::logger()->debug("[Cboard] Sent command: control={}, shoot={}, yaw={}, pitch={}, horizon_distance={:.2f}",
-      //                       command.control, command.shoot, (float)(command.yaw / 3.14159 * 180.0), (float)(command.pitch/ 3.14159 * 180.0), (float_t)command.horizon_distance);
+      serial_.flushOutput();
     }
-    catch (const std::exception &e)
+    catch (const std::exception &)
     {
-      tools::logger()->warn("[Cboard] Failed to write serial: {}", e.what());
     }
   }
 
   bool CBoard::read(uint8_t *buffer, size_t size)
   {
-    return io::read_exact(serial_, buffer, size);
+    try
+    {
+      return serial_.read(buffer, size) == size;
+    }
+    catch (const std::exception &e)
+    {
+      return false;
+    }
   }
 
   void CBoard::reconnect()
   {
-    io::reconnect_serial(serial_, quit_, "[Cboard]", [this] { queue_.clear(); });
+    int max_retry_count = 10;
+    for (int i = 0; i < max_retry_count && !quit_; ++i)
+    {
+      try
+      {
+        serial_.close();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+      catch (...)
+      {
+      }
+
+      try
+      {
+        serial_.open();
+        auto timeout = serial::Timeout::simpleTimeout(20);
+        serial_.setTimeout(timeout);
+        queue_.clear();
+        tools::logger()->info("[Cboard] Reconnected serial successfully.");
+        break;
+      }
+      catch (const std::exception &e)
+      {
+        tools::logger()->warn("[Cboard] Reconnect attempt {} failed: {}", i + 1, e.what());
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+    }
   }
 
   void CBoard::read_thread()
@@ -141,10 +185,10 @@ namespace io
 
     while (!quit_)
     {
-      if (error_count > 5000)
+      if (error_count > 50)
       {
+        tools::logger()->warn("[Cboard] Too many read errors ({}), attempting to reconnect...", error_count);
         error_count = 0;
-        tools::logger()->warn("[Cboard] Too many errors, attempting to reconnect...");
         reconnect();
         continue;
       }
@@ -178,40 +222,54 @@ namespace io
       //   continue;
       // }
       if(rx_data_.tail[0]!='E' || rx_data_.tail[1]!='N')
-      {
-        tools::logger()->debug("[Cboard] Tail check failed.");
         continue;
-      }
 
       // tools::logger()->debug("[Cboard] Received data: mode={}", rx_data_.mode);
       error_count = 0;
 
-      // --- 数据解析：旧版 q[4] 四元数字段已废弃，当前统一使用 yaw/pitch/roll ---
+      // --- 数据解析 (对应原 CAN callback 逻辑) ---
+      // auto x = rx_data_.q[1];
+      // auto y = rx_data_.q[2];
+      // auto z = rx_data_.q[3];
+      // auto w = rx_data_.q[0];
       auto yaw_ = rx_data_.yaw;
       auto pitch_ = rx_data_.pitch;
       auto roll_ = rx_data_.roll;
       // tools::logger()->debug("[Cboard] Received data: yaw={.02f}, pitch={.02f}, roll={.02f}", yaw_, pitch_, roll_);
 
-      if (!io::euler_angles_sane(yaw_, pitch_, roll_, "[Cboard]")) {
-        continue;
-      }
+      // 从欧拉角转换为四元数（ZYX顺序：yaw-pitch-roll）
+      Eigen::Quaterniond q_from_euler = 
+          (Eigen::AngleAxisd(yaw_, Eigen::Vector3d::UnitZ()) *
+          Eigen::AngleAxisd(pitch_, Eigen::Vector3d::UnitY()) *
+          Eigen::AngleAxisd(roll_, Eigen::Vector3d::UnitX())).normalized();
+      
+      auto x = q_from_euler.x();
+      auto y = q_from_euler.y();
+      auto z = q_from_euler.z();
+      auto w = q_from_euler.w();
+      // tools::logger()->debug("[Cboard] IMU Quaternion: w={}, x={}, y={}, z={}", w, x, y, z);
 
-      // 从欧拉角转换为四元数（ZYX顺序：yaw-pitch-roll），并做有效性检查
-      auto q_from_euler = io::decode_euler_quaternion(yaw_, pitch_, roll_, "[Cboard]");
-      if (q_from_euler) {
-        queue_.push({{q_from_euler->w(), q_from_euler->x(), q_from_euler->y(), q_from_euler->z()}, t});
-      }
-
-      if(speed_control)
+      
+      // 四元数有效性检查
+      if (std::isnan(x) || std::isnan(y) || std::isnan(z) || std::isnan(w))
       {
+        tools::logger()->warn("[Cboard] Invalid q: NaN detected - w={}, x={}, y={}, z={}", w, x, y, z);
+      }
+      else if (std::abs(x * x + y * y + z * z + w * w - 1) > 1e-2)
+      {
+        tools::logger()->warn("[Cboard] Invalid q: magnitude check failed - w={}, x={}, y={}, z={}", w, x, y, z);
+      }
+      else
+      {
+        queue_.push({{ w, x, y, z}, t});
+      }
+
+
+
+      if(speed_control) 
+      { 
         // 更新状态变量 (对应原 bullet_speed_canid_ 接收逻辑)
         bullet_speed = rx_data_.bullet_speed;
-
-        // 滑动窗口：只有有效弹速且与前一个值不同时才加入窗口
-        if (bullet_speed > 0) {
-          bullet_speed_filter_.push(static_cast<float>(bullet_speed));
-        }
-
         mode = Mode(rx_data_.mode);
         // shoot_mode = ShootMode(rx_data_.shoot_mode);
         // ft_angle = rx_data_.ft_angle;
@@ -238,14 +296,6 @@ namespace io
     }
 
     tools::logger()->info("[Cboard] read_thread stopped.");
-  }
-
-  double CBoard::get_average_bullet_speed() const
-  {
-    if (bullet_speed_filter_.empty()) {
-      return bullet_speed_config;
-    }
-    return bullet_speed_filter_.average();
   }
 
 }  // namespace io

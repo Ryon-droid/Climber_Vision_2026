@@ -1,8 +1,6 @@
 enemy_color: "red"
-# enemy_color: "blue"
+#enemy_color: "blue"
 
-# 机器人类型配置（hero或其他）
-robot_type: "hero"  # hero为英雄机器人，其他为普通机器人
 tradition_detect: false
 #####-----神经网络参数-----#####
 yolo_name: yolov5
@@ -24,7 +22,7 @@ roi:
 use_roi: false
 
 #####-----传统方法参数-----#####
-threshold: 150
+threshold: 150.0 #S
 max_angle_error: 45 # degree
 min_lightbar_ratio: 1.5
 max_lightbar_ratio: 20
@@ -37,10 +35,11 @@ max_rectangular_error: 25 # degree
 
 #####-----tracker参数-----#####
 min_detect_count: 5               #追踪检测次数阈值
-max_temp_lost_count: 15           #装甲板最大丢失帧数
-outpost_max_temp_lost_count: 75   #前哨站最大丢失帧数
+max_temp_lost_count: 10           #装甲板最大丢失帧数
+outpost_max_temp_lost_count: 10   #前哨站最大丢失帧数
 
 #####-----aimer参数-----#####
+air_resistance_k: 0.016  # 线性空气阻力系数，0=真空弹道
 yaw_offset: 0 # degree -2.5
 pitch_offset: 0 # degree 2
 comming_angle: 60 # degree
@@ -58,8 +57,9 @@ judge_distance: 3 #距离判断阈值
 auto_fire: true # 是否由自瞄控制射击
  
 camera_name: "hikrobot"
-exposure_ms: 4
-gain: 16
+mode: 1
+exposure_ms: 8
+gain: 12
 vid_pid: "2bdf:0001"
 
 #  1  0  0
@@ -73,9 +73,9 @@ R_gimbal2imubody: [0, -1, 0,
 #                   0, -1, 0,
 #                   0, 0, -1]
 
-# 重投影误差: 0.2107px
-camera_matrix: [2292.0275817422962, 0, 730.9833139759603, 0, 2292.8812845258312, 586.12025110046659, 0, 0, 1]
-distort_coeffs: [-0.060928956724159829, 0.24158248704129962, 0.003218516634930931, 0.0013140084182289827, 0]
+# 重投影误差: 0.0803px
+camera_matrix: [2406.3851576101033, 0, 731.59641108065682, 0, 2406.4713805506717, 534.64264357329864, 0, 0, 1]
+distort_coeffs: [-0.028076377015711342, 0.1680164324298713, 0.0003309268455499283, -2.5854440964796253e-05, 0]
 
 
 
@@ -102,12 +102,15 @@ t_camera2gimbal: [0.11, 0, 0.084]
 # can_interface: "can0"
 
 #####-----gimbal参数-----#####
-com_port: "/dev/ttyUSB0"
+# com_port: "/dev/ttyLeg1"
+com_port: "/dev/ttyACM0"
 speed_control: false
-bullet_speed: 12  # m/s
+bullet_speed: 23.8  # m/s
 
 # #####-----planner-----#####
 # fire_thresh: 0.003
+# jump_thresh: 5              # deg, 帧间 yaw 跳变阈值
+# fire_cooldown_frames: 5     # 跳变后抑制开火帧数
 
 # max_yaw_acc: 50
 # Q_yaw: [9e6, 0]

@@ -25,7 +25,7 @@ using namespace std::chrono_literals;
 
 const std::string keys =
     "{help h usage ? |      | 输出命令行参数说明 }"
-    "{config-path c  | configs/hero.yaml | yaml配置文件的路径}";
+    "{@config-path   | configs/leg_aim.yaml | yaml配置文件的路径}";
     // "{tradition t    | true | 是否使用传统方法识别}";
 
 int main(int argc, char *argv[])
@@ -37,7 +37,7 @@ int main(int argc, char *argv[])
         return 0;
     }
     
-    auto config_path = cli.get<std::string>("config-path");
+    auto config_path = cli.get<std::string>(0);
     auto yaml = tools::load(config_path);
     auto use_tradition = tools::read<bool>(yaml, "use_traditional");
     
@@ -73,7 +73,7 @@ int main(int argc, char *argv[])
         camera.read(img, t);
         if (img.empty())
             break;
-        q = gimbal.q(t );
+        q = gimbal.q(t - 1ms);
 
         auto last = std::chrono::steady_clock::now();
 
@@ -139,20 +139,11 @@ int main(int argc, char *argv[])
         if (key == 'q')
             break;
 
-        if (!targets.empty()) {
-            auto target = targets.front();
-            auto gimbal_state = gimbal.state();
-            auto command = aimer.aim(targets, t, gimbal_state.bullet_speed, q);
-            // 发射逻辑
-            command.shoot = shooter.shoot(command, aimer, targets, gimbal_pos, gimbal_state.bullet_speed);
+        auto command = aimer.aim(targets, t, gimbal.state().bullet_speed, q);
+        // 发射逻辑
+        command.shoot = shooter.shoot(command, aimer, targets, gimbal_pos);
 
-            // 发送控制指令
-            gimbal.send(command.control, command.shoot, command.yaw, 0, 0, command.pitch, 0, 0);
-        }
-        else {
-            // 发送空指令
-            gimbal.send(false, false, 0, 0, 0, 0, 0, 0);
-        }
+        gimbal.send(command.control, command.shoot, command.yaw, 0, 0, command.pitch, 0, 0);
     }
 
     return 0;

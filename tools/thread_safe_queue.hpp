@@ -1,6 +1,7 @@
 #ifndef TOOLS__THREAD_SAFE_QUEUE_HPP
 #define TOOLS__THREAD_SAFE_QUEUE_HPP
 
+#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <iostream>
@@ -24,10 +25,10 @@ public:
     std::unique_lock<std::mutex> lock(mutex_);
 
     if (queue_.size() >= max_size_) {
+      full_handler_();
       if (PopWhenFull) {
         queue_.pop();
       } else {
-        full_handler_();
         return;
       }
     }
@@ -49,6 +50,19 @@ public:
 
     value = queue_.front();
     queue_.pop();
+  }
+
+  bool pop_for(T & value, std::chrono::milliseconds timeout)
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+
+    if (!not_empty_condition_.wait_for(lock, timeout, [this] { return !queue_.empty(); })) {
+      return false;
+    }
+
+    value = queue_.front();
+    queue_.pop();
+    return true;
   }
 
   T pop()
@@ -95,7 +109,7 @@ public:
     while (!queue_.empty()) {
       queue_.pop();
     }
-    not_empty_condition_.notify_all();  // 如果其他线程正在等待队列不为空，这样可以唤醒它们
+    not_empty_condition_.notify_all();
   }
 
 private:

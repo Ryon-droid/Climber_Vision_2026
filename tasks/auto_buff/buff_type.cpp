@@ -21,6 +21,19 @@ PowerRune::PowerRune(
   std::vector<FanBlade> & ts, const cv::Point2f center, std::optional<PowerRune> last_powerrune)
 : r_center(center), light_num(ts.size())
 {
+  model_r_center = center;
+  if (!ts.empty() && ts.front().points.size() > 5) {
+    model_r_center = cv::Point2f(0, 0);
+    int model_r_count = 0;
+    for (const auto & t : ts) {
+      if (t.points.size() > 5) {
+        model_r_center += t.points[5];
+        model_r_count++;
+      }
+    }
+    if (model_r_count > 0) model_r_center *= 1.0f / model_r_count;
+  }
+
   /// 找出target
 
   // 只有一个fanblade，就为target

@@ -38,20 +38,24 @@ Recorder::~Recorder()
 void Recorder::save_to_file()
 {
   while (!stop_thread_) {
-    FrameData frame;
-    queue_.pop(frame);  // 从队列中取出帧数据
-    if (frame.img.empty()) {
-      tools::logger()->debug("Recorder received empty img. Skip this frame.");
-      continue;
-    }
-    // 写入视频文件
-    video_writer_.write(frame.img);
+    try {
+      FrameData frame;
+      queue_.pop(frame);  // 从队列中取出帧数据
+      if (frame.img.empty()) {
+        tools::logger()->debug("Recorder received empty img. Skip this frame.");
+        continue;
+      }
+      // 写入视频文件
+      video_writer_.write(frame.img);
 
-    // 写入文本文件（输出顺序为wxyz）
-    Eigen::Vector4d xyzw = frame.q.coeffs();
-    auto since_begin = tools::delta_time(frame.timestamp, start_time_);
-    text_writer_ << fmt::format(
-      "{} {} {} {} {}\n", since_begin, xyzw[3], xyzw[0], xyzw[1], xyzw[2]);
+      // 写入文本文件（输出顺序为wxyz）
+      Eigen::Vector4d xyzw = frame.q.coeffs();
+      auto since_begin = tools::delta_time(frame.timestamp, start_time_);
+      text_writer_ << fmt::format(
+        "{} {} {} {} {}\n", since_begin, xyzw[3], xyzw[0], xyzw[1], xyzw[2]);
+    } catch (const std::exception & e) {
+      tools::logger()->error("[Recorder] save_to_file error: {}", e.what());
+    }
   }
 }
 

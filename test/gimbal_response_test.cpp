@@ -3,7 +3,7 @@
 #include <opencv2/opencv.hpp>
 #include <thread>
 
-#include "io/cboard.hpp"
+#include "io/gimbal/gimbal.hpp"
 #include "tasks/auto_aim/solver.hpp"
 #include "io/command.hpp"
 #include "tools/exiter.hpp"
@@ -14,27 +14,25 @@
 using namespace std::chrono_literals;
 
 const std::string keys =
-  "{help h usage ? |                     | 输出命令行参数说明}"
-  "{delta-angle a  |          8          | yaw轴delta角}"
-  "{circle      c  |         0.2         | delta_angle的切片数}"  //参数调整
-  "{signal-mode m  |     triangle_wave   | 发送信号的模式}"
-  "{axis        x  |         yaw         | 发送信号的轴}"
-  "{@config-path   | configs/sentry.yaml | 位置参数，yaml配置文件路径 }";
+  "{help h usage ? |                     | Show command line help}"
+  "{delta-angle a  |          8          | Delta angle on yaw axis}"
+  "{circle      c  |         0.2         | Number of slices in one period}"
+  "{signal-mode m  |     triangle_wave   | Signal mode}"
+  "{axis        x  |         yaw         | Controlled axis}"
+  "{@config-path   | configs/sentry.yaml | Positional yaml config path }";
 
 double yaw_cal(double t)
 {
-  double A = 7;
-  double T = 4;  // s
-
-  return A * std::sin(2 * M_PI * t / T);  // 31是云台yaw初始角度，单位为度
+  double A = -6;
+  double T = 2;  // s
+  return A * std::sin(2 * M_PI * t / T);
 }
 
 double pitch_cal(double t)
 {
-  double A = 7;
-  double T = 4;  // s
-
-  return A * std::sin(2 * M_PI * t / T + M_PI / 2) + 18;  // 18是云台pitch初始角度，单位为度
+  double A = -6;
+  double T = 2;  // s
+  return A * std::sin(2 * M_PI * t / T + M_PI / 2) - 18;
 }
 
 int main(int argc, char * argv[])
@@ -53,31 +51,29 @@ int main(int argc, char * argv[])
   tools::Exiter exiter;
   tools::Plotter plotter;
 
-  io::CBoard cboard(config_path);
+  io::Gimbal gimbal(config_path);
   auto_aim::Solver solver(config_path);
 
   auto init_angle = 0;
-  double slice = circle * 100;  //切片数=周期*帧率
+  double slice = circle * 100;
   auto dangle = delta_angle / slice;
   double cmd_angle = init_angle;
 
-  int axis_index = axis == "yaw" ? 0 : 1;  // 0 for yaw, 1 for pitch
+  int axis_index = axis == "yaw" ? 0 : 1;
 
-  double error = 0;
   int count = 0;
-  int step_dir = 1;          // step模式方向：1为正向，-1为反向
-  const double step_limit = 40.0;  // step模式限位（度）
+  int step_dir = 1;
+  const double step_limit = 20.0;
 
-  io::Command init_command{1, 0, 0, 0};
-  cboard.send(init_command);
-  std::this_thread::sleep_for(5s);  //等待云台归零
+  gimbal.send(true, false, 0, 0, 0, 0, 0, 0);
+  std::this_thread::sleep_for(5s);
 
   io::Command command{0};
   io::Command last_command{0};
 
   double t = 0;
   auto last_t = t;
-  double dt = 0.005;  // 5ms, 模拟200fps
+  double dt = 0.005;
 
   auto t0 = std::chrono::steady_clock::now();
 
@@ -87,11 +83,12 @@ int main(int argc, char * argv[])
 
     std::this_thread::sleep_for(1ms);
 
-    Eigen::Quaterniond q = cboard.imu_at(timestamp);
+    // Eigen::Quaterniond q = gimbal.q(timestamp);
+    // solver.set_R_gimbal2world(q);
 
-    solver.set_R_gimbal2world(q);
+    // Eigen::Vector3d eulers = tools::eulers(q, 2, 1, 0);
 
-    Eigen::Vector3d eulers = tools::eulers(q, 2, 1, 0);
+    auto gs = gimbal.state();
 
     if (signal_mode == "triangle_wave") {
       if (count == slice) {
@@ -112,45 +109,52 @@ int main(int argc, char * argv[])
         count++;
       }
 
-      cboard.send(command);
+      gimbal.send(command.control, command.shoot, command.yaw, 0, 0, command.pitch, 0, 0);
       if (axis_index == 0) {
         data["cmd_yaw"] = command.yaw * 57.3;
         data["last_cmd_yaw"] = last_command.yaw * 57.3;
-        data["gimbal_yaw"] = eulers[0] * 57.3;
+        data["gimbal_yaw"] = gs.yaw * 57.3;
       } else {
         data["cmd_pitch"] = command.pitch * 57.3;
         data["last_cmd_pitch"] = last_command.pitch * 57.3;
-        data["gimbal_pitch"] = eulers[1] * 57.3;
+        data["gimbal_pitch"] = gs.pitch * 57.3;
       }
       data["t"] = tools::delta_time(std::chrono::steady_clock::now(), t0);
       last_command = command;
       plotter.plot(data);
-      std::this_thread::sleep_for(8ms);  //模拟自瞄100fps
+      std::this_thread::sleep_for(8ms);
     }
 
-    else if (signal_mode == "step") {//步进
+    else if (signal_mode == "step") {
       if (count == 300) {
         cmd_angle += step_dir * delta_angle;
-        // 到达限位时反向
         if (cmd_angle >= init_angle + step_limit || cmd_angle <= init_angle - step_limit) {
           step_dir = -step_dir;
         }
         count = 0;
       }
-      command = {1, 0, tools::limit_rad(cmd_angle / 57.3), 0};
+
       count++;
 
-      cboard.send(command);
-      data["cmd_yaw"] = command.yaw * 57.3;
-      data["last_cmd_yaw"] = last_command.yaw * 57.3;
-      data["gimbal_yaw"] = eulers[0] * 57.3;
+      if (axis_index == 0) {
+        command = {1, 0, tools::limit_rad(cmd_angle / 57.3), 0};
+        data["cmd_yaw"] = command.yaw * 57.3;
+        data["last_cmd_yaw"] = last_command.yaw * 57.3;
+        data["gimbal_yaw"] = gs.yaw * 57.3;
+      } else {
+        command = {1, 0, 0, tools::limit_rad(cmd_angle / 57.3)};
+        data["cmd_pitch"] = command.pitch * 57.3;
+        data["last_cmd_pitch"] = last_command.pitch * 57.3;
+        data["gimbal_pitch"] = gs.pitch * 57.3;
+      }
+
+      gimbal.send(command.control, command.shoot, command.yaw, 0, 0, command.pitch, 0, 0);
       last_command = command;
       plotter.plot(data);
-      std::this_thread::sleep_for(8ms);  //模拟自瞄100fps
+      std::this_thread::sleep_for(8ms);
     }
 
-    else if (signal_mode == "circle") {//圆
-      std::cout << "t: " << t << std::endl;
+    else if (signal_mode == "circle") {
       command.yaw = yaw_cal(t) / 57.3;
       command.pitch = pitch_cal(t) / 57.3;
       command.control = 1;
@@ -160,13 +164,13 @@ int main(int argc, char * argv[])
         t += 2.4;
         last_t = t;
       }
-      cboard.send(command);
+      gimbal.send(command.control, command.shoot, command.yaw, 0, 0, command.pitch, 0, 0);
 
       data["t"] = t;
       data["cmd_yaw"] = command.yaw * 57.3;
       data["cmd_pitch"] = command.pitch * 57.3;
-      data["gimbal_yaw"] = eulers[0] * 57.3;
-      data["gimbal_pitch"] = eulers[1] * 57.3;
+      data["gimbal_yaw"] = gs.yaw * 57.3;
+      data["gimbal_pitch"] = gs.pitch * 57.3;
       plotter.plot(data);
       std::this_thread::sleep_for(9ms);
     }

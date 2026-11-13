@@ -4,7 +4,6 @@
 #include <Eigen/Dense>
 #include <list>
 #include <optional>
-#include <string>
 
 #include "tasks/auto_aim/target.hpp"
 #include "tinympc/tiny_api.hpp"
@@ -30,9 +29,6 @@ struct Plan
   float pitch;
   float pitch_vel;
   float pitch_acc;
-  float fire_error;
-  float fire_error_threshold;
-  float fire_target_distance;
 };
 
 class Planner
@@ -49,7 +45,7 @@ private:
   double pitch_offset_;
   double fire_thresh_;
   double low_speed_delay_time_, high_speed_delay_time_, decision_speed_;
-  bool use_air_resistance_ = false;
+  double air_resistance_k_ = 0.0;
 
   TinySolver * yaw_solver_;
   TinySolver * pitch_solver_;

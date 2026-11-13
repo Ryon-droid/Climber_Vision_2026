@@ -13,7 +13,6 @@
 
 #include "io/command.hpp"
 #include "serial/serial.h"
-#include "tools/bullet_speed_filter.hpp"
 #include "tools/logger.hpp"
 #include "tools/thread_safe_queue.hpp"
 
@@ -37,7 +36,7 @@ struct __attribute__((packed)) BoardToVision
   uint8_t head[2] = {'B', 'V'}; // 帧头
   uint8_t mode;                 // 射击模式：0手动，1自瞄，2开符
   float bullet_speed;           //  1e2
-  // 废弃字段：历史版本曾使用 float q[4] 直接传四元数（wxyz顺序），现已停用
+  // float q[4];                   // wxyz顺序，四元数
   float yaw;
   float pitch;
   float roll;
@@ -76,7 +75,6 @@ public:
 
   void send(Command command);
 
-  double get_average_bullet_speed() const;
 
 private:
   struct IMUData
@@ -92,8 +90,6 @@ private:
 
   std::thread thread_;
   std::atomic<bool> quit_=false;
-
-  tools::BulletSpeedFilter bullet_speed_filter_{3};
 
   IMUData data_ahead_;
   IMUData data_behind_;

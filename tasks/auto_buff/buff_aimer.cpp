@@ -1,6 +1,6 @@
 #include "buff_aimer.hpp"
 
-#include "buff_target.hpp"
+#include "tools/air_resist_trajectory.hpp"
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 #include "tools/trajectory.hpp"
@@ -10,53 +10,46 @@ namespace auto_buff
 Aimer::Aimer(const std::string & config_path)
 {
   auto yaml = YAML::LoadFile(config_path);
-  // 目标预测时间（基于识别结果的未来位置推算）
+  yaw_offset_ = yaml["yaw_offset"].as<double>() / 57.3;
+  pitch_offset_ = yaml["pitch_offset"].as<double>() / 57.3;
+  fire_gap_time_ = yaml["fire_gap_time"].as<double>();
   predict_time_ = yaml["predict_time"].as<double>();
+  if (yaml["air_resistance_k"])
+    air_resistance_k_ = yaml["air_resistance_k"].as<double>();
 
-  // 射击时间戳
   last_fire_t_ = std::chrono::steady_clock::now();
 }
 
 io::Command Aimer::aim(
   auto_buff::Target & target, std::chrono::steady_clock::time_point & timestamp,
-  double bullet_speed, bool to_now)
+  double bullet_speed, bool to_now,
+  const std::chrono::steady_clock::time_point * now_override)
 {
   io::Command command = {false, false, 0, 0};
-  // -------------------------- 识别相关核心逻辑 --------------------------
-  // 1. 判断目标是否可解（识别模块输出的核心状态：是否成功识别并追踪到目标）
-  if (target.is_unsolve()) {
-    tools::logger()->debug("[Aimer] 目标不可解（识别失败或追踪发散）");
-    return command;
-  }
+  command.yaw = last_yaw_;
+  command.pitch = -last_pitch_;
+  if (target.is_unsolve()) return command;
 
-  // 2. 计算识别延迟：从"图像采集时间戳"到"当前处理时间"的间隔（识别数据的时效性判断）
-  auto now = std::chrono::steady_clock::now();
+  if (bullet_speed < 10 || bullet_speed > 28) bullet_speed = 24;
+
+  auto now = (now_override != nullptr) ? *now_override : std::chrono::steady_clock::now();
   auto detect_now_gap = tools::delta_time(now, timestamp);
-  // 3. 确定目标预测时间：基于识别延迟补偿，推算目标未来位置的时间基准（识别结果的后续应用）
-  auto future = to_now ? (detect_now_gap + predict_time_) : predict_time_;
-  double yaw, pitch;
+  auto future = to_now ? (detect_now_gap + predict_time_) : 0.1 + predict_time_;
+  double yaw = 0.0;
+  double pitch = 0.0;
 
-  // 4. 调用角度计算函数（内部包含基于识别结果的目标预测，核心识别-瞄准衔接）
-  // -------------------------- 识别相关核心逻辑结束 --------------------------
-
-  // 瞄准角度计算、云台控制、射击决策（控制/瞄准层）
   if (get_send_angle(target, future, bullet_speed, to_now, yaw, pitch)) {
-    // 赋值瞄准角度（控制层）
     command.yaw = yaw;
-    command.pitch = -pitch;  //世界坐标系下的pitch向上为负
-    
-    // 角度变化判断（云台稳定性控制）
-    bool angle_changed = std::abs(last_yaw_ - yaw) > 5 / 57.3 || std::abs(last_pitch_ - pitch) > 5 / 57.3;
-    
-    // 扇叶切换与控制权限判断（控制层）
+    command.pitch = -pitch;
     if (mistake_count_ > 3) {
       switch_fanblade_ = true;
       mistake_count_ = 0;
       command.control = true;
-    } else if (angle_changed) {
+    } else if (std::abs(last_yaw_ - yaw) > 5 / 57.3 || std::abs(last_pitch_ - pitch) > 5 / 57.3) {
       switch_fanblade_ = true;
       mistake_count_++;
-      command.control = false;
+      // 切板时保持连续控制，只抑制开火，避免电控出现control中断。
+      command.control = true;
     } else {
       switch_fanblade_ = false;
       mistake_count_ = 0;
@@ -66,7 +59,8 @@ io::Command Aimer::aim(
     last_pitch_ = pitch;
   }
 
-  // 非识别：射击决策（控制层）
+  if (!command.control) return command;
+
   if (switch_fanblade_) {
     command.shoot = false;
     last_fire_t_ = now;
@@ -75,95 +69,198 @@ io::Command Aimer::aim(
     last_fire_t_ = now;
   }
 
+  // 短时预测帧：强制禁止射击，但保留 control 角度
+  if (target.is_predicted()) {
+    command.shoot = false;
+  }
+
   return command;
+}
+
+auto_aim::Plan Aimer::mpc_aim(
+  auto_buff::Target & target, std::chrono::steady_clock::time_point & timestamp, io::GimbalState gs,
+  bool to_now,
+  const std::chrono::steady_clock::time_point * now_override)
+{
+  auto_aim::Plan plan = {false, false, 0, 0, 0, 0, 0, 0, 0, 0};
+  plan.yaw = static_cast<float>(last_yaw_);
+  plan.pitch = static_cast<float>(-last_pitch_);
+  plan.target_yaw = plan.yaw;
+  plan.target_pitch = plan.pitch;
+  if (target.is_unsolve()) {
+    first_in_aimer_ = true;
+    return plan;
+  }
+
+  double bullet_speed = gs.bullet_speed;
+  if (bullet_speed < 10 || bullet_speed > 28) bullet_speed = 24;
+
+  auto now = (now_override != nullptr) ? *now_override : std::chrono::steady_clock::now();
+
+  // 考虑detector所消耗的时间，此外假设aimer的用时可忽略不计
+  auto detect_now_gap = tools::delta_time(now, timestamp);
+  // 如果 to_now 为 true，则根据当前时间和时间戳预测目标位置
+  auto future = to_now ? (detect_now_gap + predict_time_) : 0.1 + predict_time_;
+  double yaw = 0.0;
+  double pitch = 0.0;
+
+  if (get_send_angle(target, future, bullet_speed, to_now, yaw, pitch)) {
+    plan.yaw = yaw;
+    plan.pitch = -pitch;
+    plan.target_yaw = plan.yaw;
+    plan.target_pitch = plan.pitch;
+    if (mistake_count_ > 3) {
+      switch_fanblade_ = true;
+      mistake_count_ = 0;
+      plan.control = true;
+      first_in_aimer_ = true;
+    } else if (std::abs(last_yaw_ - yaw) > 5 / 57.3 || std::abs(last_pitch_ - pitch) > 5 / 57.3) {
+      switch_fanblade_ = true;
+      mistake_count_++;
+      // 切板时保持连续控制，只抑制开火，避免电控出现control中断。
+      plan.control = true;
+      first_in_aimer_ = true;
+    } else {
+      switch_fanblade_ = false;
+      mistake_count_ = 0;
+      plan.control = true;
+    }
+    last_yaw_ = yaw;
+    last_pitch_ = pitch;
+
+    if (plan.control) {
+      if (first_in_aimer_) {
+        plan.yaw_vel = 0;
+        plan.yaw_acc = 0;
+        plan.pitch_vel = 0;
+        plan.pitch_acc = 0;
+        first_in_aimer_ = false;
+      } else {
+        auto dt = predict_time_;
+        double last_yaw_mpc = 0.0;
+        double last_pitch_mpc = 0.0;
+        get_send_angle(target, predict_time_ * -1, bullet_speed, to_now, last_yaw_mpc, last_pitch_mpc);
+        plan.yaw_vel = tools::limit_rad(yaw - last_yaw_mpc) / (2 * dt);
+        plan.yaw_acc = (tools::limit_rad(yaw - gs.yaw) - tools::limit_rad(gs.yaw - last_yaw_mpc)) /
+                       std::pow(dt, 2);
+
+        plan.pitch_vel = tools::limit_rad(-pitch + last_pitch_mpc) / (2 * dt);
+        plan.pitch_acc = (-pitch - gs.pitch - (gs.pitch + last_pitch_mpc)) / std::pow(dt, 2);
+        // plan.yaw_vel = tools::limit_min_max(plan.yaw_vel, -6.28, 6.28);
+        // plan.yaw_acc = tools::limit_min_max(plan.yaw_acc, -50, 50);
+        // plan.pitch_vel = tools::limit_min_max(plan.pitch_vel, -6.28, 6.28);
+        // plan.pitch_acc = tools::limit_min_max(plan.pitch_acc, -100, 100);
+      }
+    }
+  }
+
+  if (!plan.control) {
+    first_in_aimer_ = true;
+    return plan;
+  }
+
+  if (switch_fanblade_) {
+    plan.fire = false;
+    last_fire_t_ = now;
+  } else if (!switch_fanblade_ && tools::delta_time(now, last_fire_t_) > fire_gap_time_) {
+    plan.fire = true;
+    last_fire_t_ = now;
+  }
+
+  // 短时预测帧：强制禁止射击，但保留 control 角度
+  if (target.is_predicted()) {
+    plan.fire = false;
+  }
+
+  return plan;
+}
+
+bool Aimer::preview(
+  Target & target, std::chrono::steady_clock::time_point & timestamp, double bullet_speed,
+  double & yaw, double & pitch, bool to_now,
+  const std::chrono::steady_clock::time_point * now_override) const
+{
+  if (target.is_unsolve()) return false;
+  if (bullet_speed < 10 || bullet_speed > 28) bullet_speed = 24;
+
+  auto now = (now_override != nullptr) ? *now_override : std::chrono::steady_clock::now();
+  auto detect_now_gap = tools::delta_time(now, timestamp);
+  auto future = to_now ? (detect_now_gap + predict_time_) : 0.1 + predict_time_;
+  if (!calc_send_angle(target, future, bullet_speed, yaw, pitch)) return false;
+
+  // preview is used by BigTargetSelector against gimbal pitch, so return command semantics.
+  pitch = -pitch;
+  return true;
+}
+
+bool Aimer::calc_send_angle(
+  auto_buff::Target & target, const double predict_time, const double bullet_speed,
+  double & yaw, double & pitch) const
+{
+  // 根据给定预测时间先走一次目标状态预测
+  target.predict(predict_time);
+
+  // 计算目标点的空间坐标
+  const Eigen::Vector3d aim_point_in_buff(0.0, 0.0, target.params_.target_radius);
+  auto aim_in_world = target.point_buff2world(aim_point_in_buff);
+  double d = std::sqrt(aim_in_world[0] * aim_in_world[0] + aim_in_world[1] * aim_in_world[1]);
+  double h = aim_in_world[2];
+
+  auto make_traj = [&](double bs, double dist, double height) {
+    return tools::AirResistTrajectory(bs, dist, height, air_resistance_k_);
+  };
+
+  // 创建弹道对象
+  auto trajectory0 = make_traj(bullet_speed, d, h);
+  if (trajectory0.unsolvable) {
+    tools::logger()->debug(
+      "[Aimer] Unsolvable trajectory0: bs={:.1f} d={:.2f} h={:.2f}", bullet_speed, d, h);
+    return false;
+  }
+
+  // 根据第一个弹道飞行时间再次预测目标位置
+  target.predict(trajectory0.fly_time);
+
+  // 计算新的目标点的空间坐标
+  aim_in_world = target.point_buff2world(aim_point_in_buff);
+  d = fsqrt(aim_in_world[0] * aim_in_world[0] + aim_in_world[1] * aim_in_world[1]);
+  h = aim_in_world[2];
+  auto trajectory1 = make_traj(bullet_speed, d, h);
+  if (trajectory1.unsolvable) {
+    tools::logger()->debug(
+      "[Aimer] Unsolvable trajectory1: bs={:.1f} d={:.2f} h={:.2f}", bullet_speed, d, h);
+    return false;
+  }
+
+  // 计算时间误差
+  auto time_error = trajectory1.fly_time - trajectory0.fly_time;
+  if (std::abs(time_error) > 0.03) {
+    tools::logger()->debug("[Aimer] Large time error: {:.3f} bs={:.1f} d={:.2f}h={:.2f}", time_error, bullet_speed, d, h);
+    return false;
+  }
+
+  // 计算偏航角和俯仰角，并返回命中结果
+  yaw = std::atan2(aim_in_world[1], aim_in_world[0]) + yaw_offset_;
+  pitch = trajectory1.pitch + pitch_offset_;
+  return true;
 }
 
 bool Aimer::get_send_angle(
   auto_buff::Target & target, const double predict_time, const double bullet_speed,
   const bool to_now, double & yaw, double & pitch)
 {
-  // 检查目标是否可解
-  if (target.is_unsolve()) {
-    tools::logger()->debug("[Aimer] 目标不可解");
-    return false;
-  }
+  (void)to_now;
 
-  // -------------------------- 识别相关核心逻辑 --------------------------
-  // 1. 基于识别到的目标状态，预测未来位置（识别结果的动态推算）
-  // （predict依赖Target模块的EKF，而EKF输入是识别到的扇叶数据）
-  target.predict(predict_time);
-  
-  // 检查EKF状态是否有效
-  Eigen::VectorXd ekf_state = target.ekf_x();
-  for (int i = 0; i < ekf_state.size(); ++i) {
-    if (std::isnan(ekf_state[i])) {
-      tools::logger()->debug("[Aimer] EKF状态包含NaN值，索引: {}", i);
-      return false;
-    }
-  }
-  
-  // 2. 获取识别追踪的核心状态：扇叶滚转角（验证识别结果的有效性）
-  double fanblade_roll = target.ekf_x()[5];
-  tools::logger()->debug("[Aimer] 识别到的扇叶滚转角：{:.2f}°", fanblade_roll * 180 / CV_PI);
-  // 3. 基于识别的目标坐标系，获取瞄准点世界坐标（识别数据的空间转换）
-  // （point_buff2world依赖Target模块的识别校准参数，输入是识别到的Buff中心）
-  Eigen::Vector3d aim_in_world = target.point_buff2world(Eigen::Vector3d(0.0, 0.0, 0.7));
-  
-  // 检查瞄准点坐标是否有效
-  if (std::isnan(aim_in_world[0]) || std::isnan(aim_in_world[1]) || std::isnan(aim_in_world[2])) {
-    tools::logger()->debug("[Aimer] 瞄准点坐标包含NaN值");
-    return false;
-  }
-  
-  tools::logger()->debug(
-    "[Aimer] 识别推算的瞄准点坐标（x,y,z）：{:.2f}, {:.2f}, {:.2f}",
-    aim_in_world[0], aim_in_world[1], aim_in_world[2]
-  );
-  // -------------------------- 识别相关核心逻辑结束 --------------------------
+  // calc_send_angle 会多次调用 target.predict()；这些预测仅用于弹道迭代，
+  // 不能污染主EKF状态，否则会在下一帧表现为相位漂移。
+  target.save_ekf_state();
 
-  // 弹道解算、角度计算（瞄准层）
-  double d = std::sqrt(aim_in_world[0] * aim_in_world[0] + aim_in_world[1] * aim_in_world[1]);
-  double h = aim_in_world[2];
-  
-  // 检查距离和高度是否有效
-  if (std::isnan(d) || std::isnan(h)) {
-    tools::logger()->debug("[Aimer] 距离或高度为NaN");
-    return false;
-  }
+  bool ok = calc_send_angle(target, predict_time, bullet_speed, yaw, pitch);
+  if (ok) angle = target.get_roll();
 
-  // 第一次弹道解算（瞄准层）
-  tools::Trajectory trajectory0(bullet_speed, d, h);
-  if (trajectory0.unsolvable) {  // 如果弹道无法解算，返回未命中结果
-    tools::logger()->debug(
-      "[Aimer] Unsolvable trajectory0: {:.2f} {:.2f} {:.2f}", bullet_speed, d, h);
-    return false;
-  }
+  target.restore_ekf_state();
 
-  // 基于弹道时间二次预测（瞄准层的动态补偿）
-  target.predict(trajectory0.fly_time);
-  fanblade_roll = target.ekf_x()[5];
-  aim_in_world = target.point_buff2world(Eigen::Vector3d(0.0, 0.0, 0.7));
-  d = std::sqrt(aim_in_world[0] * aim_in_world[0] + aim_in_world[1] * aim_in_world[1]);
-  h = aim_in_world[2];
-
-  // 第二次弹道解算（瞄准层）
-  tools::Trajectory trajectory1(bullet_speed, d, h);
-  if (trajectory1.unsolvable) {  // 如果弹道无法解算，返回未命中结果
-    tools::logger()->debug(
-      "[Aimer] Unsolvable trajectory1: {:.2f} {:.2f} {:.2f}", bullet_speed, d, h);
-    return false;
-  }
-
-  // 验证弹道时间稳定性（瞄准层）
-  auto time_error = trajectory1.fly_time - trajectory0.fly_time;
-  if (std::abs(time_error) > 0.01) {  // 如果时间误差过大，返回未命中结果
-    tools::logger()->debug("[Aimer] Large time error: {:.3f}", time_error);
-    return false;
-  }
-
-  // 计算最终瞄准角度（瞄准层）
-  yaw = std::atan2(aim_in_world[1], aim_in_world[0]);
-  pitch = trajectory1.pitch;
-  return true;
+  return ok;
 }
+
 }  // namespace auto_buff

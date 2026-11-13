@@ -1,19 +1,16 @@
 {
     "configurations": [
         {
-            "name": "Climber_Vision",
+            "name": "Climber_Vision_2026",
+            "forcedInclude": [
+                "${workspaceFolder}/.vscode/eigen_fix.h"
+            ],
             "includePath": [
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/io/serial/include",
-                "${workspaceFolder}/io/hikrobot/include",
-                "${workspaceFolder}/io/**",
-                "${workspaceFolder}/tasks/auto_aim/**",
-                "${workspaceFolder}/tasks/auto_buff/**",
-                "${workspaceFolder}/tools/**",
                 "/usr/include/opencv4",
                 "/usr/include/eigen3",
-                "/opt/intel/openvino_2025.3.0/runtime/include/",
-                "/opt/ros/jazzy/include/**"
+                "/opt/intel/openvino_2026.1.0/runtime/include/"
             ],
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "c17",

@@ -138,13 +138,7 @@ public:
             task = std::move(tasks.front());
             tasks.pop();
           }
-          try {
-            task();
-          } catch (const std::exception & e) {
-            tools::logger()->error("[ThreadPool] Task threw exception: {}", e.what());
-          } catch (...) {
-            tools::logger()->error("[ThreadPool] Task threw unknown exception.");
-          }
+          task();
         }
       });
     }

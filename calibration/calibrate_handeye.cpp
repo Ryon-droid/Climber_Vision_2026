@@ -2,8 +2,7 @@
  * calibrate_handeye.cpp
  * 实时手眼标定（RobotWorldHandEye 方法，同步解算标定板世界位姿）
  *
- * --protocol cboard  使用 CBoard 协议获取 IMU 四元数（默认）
- * --protocol gimbal  使用 Gimbal 协议获取 IMU 四元数
+ * Use Gimbal protocol for IMU quaternion input.
  *
  * 操作：
  *   s / 空格  ——  手动捕获（需检测到标定板且图像清晰）
@@ -26,7 +25,6 @@
 #include <opencv2/opencv.hpp>
 
 #include "io/camera.hpp"
-#include "io/cboard.hpp"
 #include "io/gimbal/gimbal.hpp"
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
@@ -34,14 +32,13 @@
 
 const std::string keys =
   "{help h usage ? |                          | 输出命令行参数说明}"
-  "{config-path   c| configs/calibration.yaml | yaml配置文件路径 }"
-  "{protocol p     |       gimbal         | 通信协议: cboard 或 gimbal}"
+  "{@config-path   | configs/calibration.yaml | yaml配置文件路径 }"
   "{min-samples n  |          15              | 开始标定所需最少样本数}"
   "{reproj-thresh  |          1.5             | 重投影误差离群点阈值（像素）}"
   "{auto           |                          | 启用自动捕获模式}"
   "{min-angle a    |          5.0             | 自动捕获：最小云台角度变化（度）}"
   "{stable-thresh  |          1.0             | 自动捕获：角点稳定阈值（像素）}"
-  "{sharp-thresh  s|          5              | 清晰度阈值（拉普拉斯方差），低于此值认为模糊}";
+  "{sharp-thresh  s|          20              | 清晰度阈值（拉普拉斯方差），低于此值认为模糊}";
 
 // ─────────────────── 工具函数 ───────────────────
 
@@ -197,8 +194,7 @@ int main(int argc, char * argv[])
   cv::CommandLineParser cli(argc, argv, keys);
   if (cli.has("help")) { cli.printMessage(); return 0; }
 
-  auto config_path   = cli.get<std::string>("config-path");
-  auto protocol      = cli.get<std::string>("protocol");
+  auto config_path   = cli.get<std::string>(0);
   auto min_samples   = cli.get<int>("min-samples");
   auto reproj_thresh = cli.get<double>("reproj-thresh");
   bool auto_mode     = cli.has("auto");
@@ -227,18 +223,11 @@ int main(int argc, char * argv[])
 
   // ---- 初始化通信协议（IMU 四元数源） ----
   std::function<Eigen::Quaterniond(std::chrono::steady_clock::time_point)> get_imu;
-  std::shared_ptr<io::CBoard> cboard_ptr;
   std::shared_ptr<io::Gimbal> gimbal_ptr;
 
-  if (protocol == "gimbal") {
-    gimbal_ptr = std::make_shared<io::Gimbal>(config_path);
-    get_imu = [&](auto t) { return gimbal_ptr->q(t); };
-    tools::logger()->info("通信协议: Gimbal");
-  } else {
-    cboard_ptr = std::make_shared<io::CBoard>(config_path);
-    get_imu = [&](auto t) { return cboard_ptr->imu_at(t); };
-    tools::logger()->info("通信协议: CBoard");
-  }
+  gimbal_ptr = std::make_shared<io::Gimbal>(config_path);
+  get_imu = [&](auto t) { return gimbal_ptr->q(t); };
+  tools::logger()->info("Protocol: Gimbal");
 
   // ---- 初始化相机 ----
   io::Camera camera(config_path);
@@ -246,8 +235,8 @@ int main(int argc, char * argv[])
   std::chrono::steady_clock::time_point timestamp;
 
   tools::logger()->info(
-    "手眼标定  pattern:{} {}x{}  protocol:{}  auto:{}",
-    pattern_type, pattern_cols, pattern_rows, protocol, auto_mode ? "ON" : "OFF");
+    "Hand-eye calibration pattern:{} {}x{} protocol:gimbal auto:{}",
+    pattern_type, pattern_cols, pattern_rows, auto_mode ? "ON" : "OFF");
   tools::logger()->info(
     "[s/空格]手动捕获  [d]删末帧  [c]清空  [r]重标定  [q/Esc]输出并退出");
 
