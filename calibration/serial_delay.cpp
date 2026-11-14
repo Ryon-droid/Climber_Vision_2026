@@ -19,11 +19,11 @@
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 #include "io/camera.hpp"
-#include "io/gimbal/gimbal.hpp"
+#include "io/cboard.hpp"
 
 const std::string keys =
     "{help h usage ? |      | 输出命令行参数说明 }"
-    "{@config-path   | configs/test_aim.yaml | yaml配置文件的路径}"
+    "{config-path c  | configs/test_aim.yaml | yaml配置文件的路径}"
     "{output o       | logs/serial_delay.csv | CSV输出路径}";
 
 using namespace std::chrono_literals;
@@ -190,7 +190,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    auto config_path = cli.get<std::string>(0);
+    auto config_path = cli.get<std::string>("config-path");
     auto output_path = cli.get<std::string>("output");
     auto yaml = tools::load(config_path);
     auto use_tradition = tools::read<bool>(yaml, "use_traditional");
@@ -217,7 +217,7 @@ int main(int argc, char *argv[])
     auto_aim::Detector detector(config_path, false);
 
     io::Camera camera(config_path);
-    io::Gimbal gimbal(config_path);
+    io::CBoard cboard(config_path);
 
     // 加载 IMU 到云台的坐标转换（参考手眼标定）
     Eigen::Matrix3d R_gimbal2imubody = Eigen::Matrix3d::Identity();
@@ -288,7 +288,7 @@ int main(int argc, char *argv[])
         }
 
         // 对齐时间：IMU 插值也用检测结束时刻，避免视觉和姿态时间基不一致
-        const auto q = gimbal.q(detect_end);
+        const auto q = cboard.imu_at(detect_end);
         // IMU(机体) -> 云台世界坐标的转换（与手眼标定一致）
         Eigen::Matrix3d R_imubody2imuabs = q.toRotationMatrix();
         Eigen::Matrix3d R_gimbal2world = R_gimbal2imubody.transpose() * R_imubody2imuabs * R_gimbal2imubody;

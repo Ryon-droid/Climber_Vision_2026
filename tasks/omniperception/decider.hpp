@@ -10,7 +10,6 @@
 #include "io/camera.hpp"
 #include "io/command.hpp"
 #include "io/usbcamera/usbcamera.hpp"
-#include "tasks/omniperception/armor_selector.hpp"
 #include "tasks/auto_aim/armor.hpp"
 #include "tasks/auto_aim/target.hpp"
 #include "tasks/auto_aim/yolo.hpp"
@@ -47,11 +46,12 @@ private:
   int img_height_;
   double default_fov_h_;
   double default_fov_v_;
-  double default_perception_pitch_offset_;
+  int mode_;
   int count_;
 
-  ArmorSelector armor_selector_;
+  auto_aim::Color enemy_color_;
   auto_aim::YOLO detector_;
+  std::vector<auto_aim::ArmorName> invincible_armor_;  //无敌状态机器人编号,英雄为1，哨兵为6
 
   // 相机视角配置结构体
   struct CameraViewConfig
@@ -59,10 +59,40 @@ private:
     double yaw_deg{0.0};
     double fov_h_deg{60.0};
     double fov_v_deg{45.0};
-    double pitch_offset_deg{0.0};
   };
 
   std::unordered_map<std::string, CameraViewConfig> camera_views_;
+
+  // 定义ArmorName到ArmorPriority的映射类型
+  using PriorityMap = std::unordered_map<auto_aim::ArmorName, auto_aim::ArmorPriority>;
+
+  const PriorityMap mode1 = {
+    {auto_aim::ArmorName::one, auto_aim::ArmorPriority::second},
+    {auto_aim::ArmorName::two, auto_aim::ArmorPriority::forth},
+    {auto_aim::ArmorName::three, auto_aim::ArmorPriority::first},
+    {auto_aim::ArmorName::four, auto_aim::ArmorPriority::first},
+    {auto_aim::ArmorName::five, auto_aim::ArmorPriority::third},
+    {auto_aim::ArmorName::sentry, auto_aim::ArmorPriority::third},
+    {auto_aim::ArmorName::outpost, auto_aim::ArmorPriority::fifth},
+    {auto_aim::ArmorName::base, auto_aim::ArmorPriority::fifth},
+    {auto_aim::ArmorName::not_armor, auto_aim::ArmorPriority::fifth}};
+
+  const PriorityMap mode2 = {
+    {auto_aim::ArmorName::two, auto_aim::ArmorPriority::first},
+    {auto_aim::ArmorName::one, auto_aim::ArmorPriority::second},
+    {auto_aim::ArmorName::three, auto_aim::ArmorPriority::second},
+    {auto_aim::ArmorName::four, auto_aim::ArmorPriority::second},
+    {auto_aim::ArmorName::five, auto_aim::ArmorPriority::second},
+    {auto_aim::ArmorName::sentry, auto_aim::ArmorPriority::third},
+    {auto_aim::ArmorName::outpost, auto_aim::ArmorPriority::third},
+    {auto_aim::ArmorName::base, auto_aim::ArmorPriority::third},
+    {auto_aim::ArmorName::not_armor, auto_aim::ArmorPriority::third}};
+};
+
+enum PriorityMode
+{
+  MODE_ONE = 1,
+  MODE_TWO
 };
 
 }  // namespace omniperception

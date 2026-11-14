@@ -1,0 +1,39 @@
+#####-----lobshot串口参数-----#####
+# 说明：
+# 1. hero.yaml 中的 com_port 仍然负责原有云台/下位机通信
+# 2. 本文件中的 lobshot_com_port 负责第二串口上的 0x0310 吊射图传发送
+# 3. 只有当第一串口收到 mode=2（吊射模式）时，程序才会打开第二串口并开始发送
+lobshot_com_port: "/dev/ttyACM1"
+lobshot_baudrate: 921600
+send_inner_packet_only: false  # true: 只发300B内层包; false: 发送RM外层0x0310帧
+fixed_test_payload_mode: false # true: 不走编码器，发送固定测试包
+
+#####-----lobshot编码参数-----#####
+crop_size: 800
+output_size: 400
+output_fps: 40
+target_bitrate: 40        # 单位 kbps
+tx_rate_hz: 48            # 串口发送频率，建议不超过 50Hz
+bandwidth_limit_kbytes: 12.0
+max_tx_delay_s: 1.0
+x265_preset: "faster"
+
+#####-----lobshot图像预处理参数-----#####
+static_simplify: true
+motion_threshold: 14
+motion_erode_px: 1
+motion_dilate_px: 2
+motion_trail_frames: 8
+trail_disable_motion_ratio: 0.30
+bg_update_alpha: 0.01
+bg_blur_sigma: 1.2
+center_clear_size: 100
+force_monochrome: false
+
+#####-----lobshot准星叠加参数-----#####
+bake_overlay: true
+crosshair_offset_x: 0
+crosshair_offset_y: 0
+crosshair_width: 1
+center_circle_radius: 24
+center_circle_width: 1

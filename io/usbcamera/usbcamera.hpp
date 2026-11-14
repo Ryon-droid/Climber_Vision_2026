@@ -10,19 +10,14 @@
 
 namespace io
 {
-// USB相机类，支持通过名字和配置文件初始化，后台线程采集图像
 class USBCamera
 {
 public:
-  USBCamera(const std::string & open_name, const std::string & config_path, bool flip = false);
+  USBCamera(const std::string & open_name, const std::string & config_path);
   ~USBCamera();
-
   cv::Mat read();
   void read(cv::Mat & img, std::chrono::steady_clock::time_point & timestamp);
-  bool read(cv::Mat & img, std::chrono::steady_clock::time_point & timestamp, int timeout_ms);
-
-  bool is_initialized() const { return ok_; }
-  double yaw_offset_deg() const { return yaw_offset_deg_; }
+  bool is_initialized() const { return ok_; } 
   std::string device_name;
 
 private:
@@ -36,12 +31,10 @@ private:
   cv::VideoCapture cap_;
   cv::Mat img_;
   std::string open_name_;
-  double usb_exposure_, usb_frame_rate_;
+  int usb_exposure_, usb_frame_rate_;
   int open_count_;
   double image_width_, image_height_;
-  double usb_gamma_, usb_gain_;
-  double yaw_offset_deg_;
-  bool flip_;
+  int usb_gamma_, usb_gain_;
   bool quit_, ok_;
   std::thread capture_thread_;
   std::thread daemon_thread_;

@@ -5,9 +5,9 @@
 /imgs
 /kernel.errors.txt
 /assets/img_with_q
-# .vscode
-logs
+/.codex
 /records
-/__pycache__/**
-.claude
-CLAUDE.md
+/build_hero_migration
+/build_codex
+/build_codex_verify
+/scripts/__pycache__

@@ -6,14 +6,15 @@
 #include <opencv2/opencv.hpp>
 
 #include "io/camera.hpp"
-#include "io/gimbal/gimbal.hpp"
+#include "io/cboard.hpp"
+// #include "io/gimbal/gimbal.hpp"
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 
 const std::string keys =
   "{help h usage ?  |                          | 输出命令行参数说明}"
-  "{@config-path   | configs/calibration.yaml | yaml配置文件路径 }"
+  "{@config-path c  | configs/calibration.yaml | yaml配置文件路径 }"
   "{output-folder o |      assets/img_with_q   | 输出文件夹路径   }";
 
 // 计算图像拉普拉斯方差（越高越清晰）
@@ -42,7 +43,7 @@ void write_q(const std::string q_path, const Eigen::Quaterniond & q)
 void capture_loop(
   const std::string & config_path, const std::string & output_folder)
 {
-  io::Gimbal gimbal(config_path);
+  io::CBoard cboard(config_path);
   // io::Gimbal gimbal(config_path);
   io::Camera camera(config_path);
   cv::Mat img;
@@ -51,8 +52,9 @@ void capture_loop(
   int count = 0;
   while (true) {
     camera.read(img, timestamp);
-    Eigen::Quaterniond q = gimbal.q(timestamp);
-    
+    Eigen::Quaterniond q = cboard.imu_at(timestamp);
+    // Eigen::Quaterniond q = gimbal.q(timestamp);
+
     // 在图像上显示欧拉角，用来判断imuabs系的xyz正方向，同时判断imu是否存在零漂
     auto img_with_ypr = img.clone();
     Eigen::Vector3d zyx = tools::eulers(q, 2, 1, 0) * 57.3;  // degree
@@ -82,7 +84,7 @@ void capture_loop(
     tools::logger()->info("[{}] Saved in {}", count, output_folder);
   }
 
-  // 离开该作用域时，camera和gimbal会自动关闭
+  // 离开该作用域时，camera和cboard会自动关闭
 }
 
 int main(int argc, char * argv[])

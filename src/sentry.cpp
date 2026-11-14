@@ -2,233 +2,156 @@
 
 #include <chrono>
 #include <fstream>
-#include <memory>
-#include <nlohmann/json.hpp>
+// #include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
-#include <vector>
 
 #include "tasks/auto_aim/aimer.hpp"
-#include "tasks/auto_aim/planner/planner.hpp"
 #include "tasks/auto_aim/solver.hpp"
 #include "tasks/auto_aim/tracker.hpp"
 #include "tasks/auto_aim/yolo.hpp"
-
-#include "tasks/omniperception/armor_selector.hpp"
+#include "tasks/auto_aim/detector.hpp"
+#include "tasks/auto_aim/shooter.hpp"
 #include "tasks/omniperception/decider.hpp"
 #include "tasks/omniperception/perceptron.hpp"
 #include "tools/exiter.hpp"
 #include "tools/img_tools.hpp"
+#include "tools/yaml.hpp"
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
-#include "tools/plotter.hpp"
-#include "tools/yaml.hpp"
+// #include "tools/plotter.hpp"
 #include "io/camera.hpp"
-#include "io/gimbal/gimbal.hpp"
 #include "io/usbcamera/usbcamera.hpp"
+#include "io/gimbal/gimbal.hpp"
 
-using namespace std::chrono_literals;
-using auto_aim::Plan;
+
+using namespace std::chrono_literals;  
 
 const std::string keys =
-  "{help h usage ? |      | print help message}"
-  "{@config-path   | configs/sentry.yaml | yaml config path}";
+    "{help h usage ? |      | 输出命令行参数说明 }"
+    "{config-path c  | configs/sentry.yaml | yaml配置文件的路径}";
+    // "{tradition t    | true | 是否使用传统方法识别}";
 
-int main(int argc, char * argv[])
+int main(int argc, char *argv[])
 {
-  cv::CommandLineParser cli(argc, argv, keys);
-  if (cli.has("help")) {
-    cli.printMessage();
+    // 1. 初始化与参数读取
+    cv::CommandLineParser cli(argc, argv, keys);
+    if (cli.has("help")) { cli.printMessage(); return 0; }
+    auto config_path = cli.get<std::string>("config-path");
+    auto yaml = tools::load(config_path);   
+    auto use_tradition = tools::read<bool>(yaml, "use_traditional");
+    if (!cli.check()) { cli.printErrors(); return -1; }
+
+    // 2. 任务类初始化
+    tools::Exiter exiter;
+    auto_aim::YOLO yolo(config_path, false);
+    auto_aim::Detector detector(config_path, false);
+    auto_aim::Solver solver(config_path);
+    auto_aim::Tracker tracker(config_path, solver);
+    auto_aim::Aimer aimer(config_path);
+    auto_aim::Shooter shooter(config_path);
+    io::USBCamera usbcam_left("camera_back_left", config_path);
+    io::USBCamera usbcam_right("camera_back_right", config_path);
+    omniperception::Decider decider(config_path);
+    omniperception::Perceptron perceptron(&usbcam_left, &usbcam_right, config_path);
+
+    // 3. 数据变量定义
+    cv::Mat img;
+    std::list<auto_aim::Armor> armors;
+    std::list<auto_aim::Target> targets;
+    std::chrono::steady_clock::time_point t;
+    Eigen::Quaterniond q;
+    io::Camera camera(config_path);
+    io::Gimbal gimbal(config_path);
+    omniperception::DetectionResult switch_target;
+
+    auto last_omni_time = std::chrono::steady_clock::now();
+    io::Command last_omni_command{false, false, 0, 0};
+    io::Command command{false, false, 0, 0};
+
+    // 4. 主循环
+    while (!exiter.exit())
+    {
+        camera.read(img, t);
+        if (img.empty()) break;
+        
+        q = gimbal.q(t - 1ms);
+        auto frame_start = std::chrono::steady_clock::now();
+
+        // 计算位姿与欧拉角 (gimbal_pos 修复点)
+        solver.set_R_gimbal2world(q);
+        Eigen::Vector3d gimbal_pos = tools::eulers(solver.R_gimbal2world(), 2, 1, 0);
+
+        // 识别逻辑
+        if (use_tradition) armors = detector.detect(img);
+        else armors = yolo.detect(img);
+
+        // 全向感知预处理
+        decider.get_invincible_armor({});
+        decider.armor_filter(armors);
+        decider.set_priority(armors);
+        
+        // 获取全向队列 (detection_queue 修复点)
+        auto detection_queue = perceptron.get_detection_queue();
+        decider.sort(detection_queue);
+
+        // 追踪逻辑
+        targets = tracker.track(armors, t);
+        // if (!detection_queue.empty()) {
+        //     switch_target = detection_queue.front();
+        // }
+
+        /// 全向感知逻辑
+        if (tracker.state() == "lost")
+            command = decider.decide(detection_queue);
+        else {
+            auto gimbal_state = gimbal.state();
+            command = aimer.aim(targets, t, gimbal_state.bullet_speed, q);
+            /// 发射逻辑
+            command.shoot = shooter.shoot(command, aimer, targets, gimbal_pos, gimbal_state.bullet_speed);
+        }
+
+        // // --- 核心控制逻辑决策树 ---
+        // if (!targets.empty()) 
+        // {
+        //     command = aimer.aim(targets, t, cboard.bullet_speed, q);
+        //     if (tracker.state() == "switching") {
+        //         command.control = true; 
+        //         command.shoot = false;
+        //         command.yaw = tools::limit_rad(switch_target.delta_yaw);
+        //         command.pitch = tools::limit_rad(switch_target.delta_pitch);
+        //     } else {
+        //         command.shoot = shooter.shoot(command, aimer, targets, gimbal_pos);
+        //     }
+        //     // 主相机工作时，重置记忆
+        //     last_omni_command = {false, false, 0, 0}; 
+        // }
+        // else if (!detection_queue.empty()) 
+        // {
+        //     command = decider.decide(detection_queue);
+        //     command.control = true;
+        //     last_omni_command = command; // 存入记忆
+        //     last_omni_time = std::chrono::steady_clock::now();
+        //     tools::logger()->info("Omni-Perception Active: Target detected.");
+        // }
+        // else 
+        // {
+        //     // 记忆维持逻辑
+        //     auto now = std::chrono::steady_clock::now();
+        //     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_omni_time).count();
+        //     if (duration < 500 && last_omni_command.control) {
+        //         command = last_omni_command;
+        //     } else {
+        //         command = {false, false, 0, 0};
+        //     }
+        // }
+
+        // 5. 发送指令
+        gimbal.send(command.control, command.shoot, command.yaw, 0, 0, command.pitch, 0, 0);
+
+        // 6. 可视化 (可选)
+        // cv::imshow("debug", img); 
+        if (cv::waitKey(1) == 'q') break;
+    }
+
     return 0;
-  }
-  auto config_path = cli.get<std::string>(0);
-  auto yaml = tools::load(config_path);
-  int64_t omni_memory_duration_ms = 500;
-  if (yaml["omni_memory_duration_ms"]) {
-    omni_memory_duration_ms = yaml["omni_memory_duration_ms"].as<int64_t>();
-  }
-
-
-  tools::Exiter exiter;
-  auto_aim::YOLO yolo(config_path, false);
-  auto_aim::Solver solver(config_path);
-  auto_aim::Tracker tracker(config_path, solver);
-  auto_aim::Aimer aimer(config_path);
-  auto_aim::Planner planner(config_path);
-
-  omniperception::Decider decider(config_path);
-  omniperception::ArmorSelector armor_selector(config_path);
-
-  std::vector<std::string> perception_camera_names;
-  if (yaml["camera_name_map"]) {
-    for (const auto & node : yaml["camera_name_map"]) {
-      perception_camera_names.push_back(node.first.as<std::string>());
-    }
-  }
-
-  if (perception_camera_names.size() > 3) {
-    tools::logger()->warn(
-      "camera_name_map has {} entries, only first 3 will be used", perception_camera_names.size());
-    perception_camera_names.resize(3);
-  }
-
-  std::vector<std::unique_ptr<io::USBCamera>> perception_cameras_owned;
-  std::vector<io::USBCamera *> perception_cameras;
-  perception_cameras_owned.reserve(perception_camera_names.size());
-  perception_cameras.reserve(perception_camera_names.size());
-
-  for (const auto & cam_name : perception_camera_names) {
-    try {
-      bool flip = false;
-      const auto camera_config = yaml["camera_name_map"][cam_name];
-      if (camera_config && camera_config.IsMap() && camera_config["flip"]) {
-        try {
-          flip = camera_config["flip"].as<bool>();
-        } catch (const std::exception & e) {
-          tools::logger()->warn("Failed to parse flip for {}: {}, using false", cam_name, e.what());
-        }
-      }
-
-      auto cam = std::make_unique<io::USBCamera>(cam_name, config_path, flip);
-      if (!cam->is_initialized()) {
-        tools::logger()->warn(
-          "Perception camera {} not ready at startup, keep auto-reconnect enabled", cam_name);
-      } else {
-        tools::logger()->info("Perception camera {} initialized", cam_name);
-      }
-      perception_cameras.push_back(cam.get());
-      perception_cameras_owned.push_back(std::move(cam));
-    } catch (const std::exception & e) {
-      tools::logger()->error("Failed to create perception camera {}: {}", cam_name, e.what());
-    }
-  }
-
-  std::unique_ptr<omniperception::Perceptron> perceptron;
-  if (!perception_cameras.empty()) {
-    try {
-      perceptron = std::make_unique<omniperception::Perceptron>(perception_cameras, config_path);
-    } catch (const std::exception & e) {
-      tools::logger()->error("Perceptron init failed: {}", e.what());
-    }
-  } else {
-    tools::logger()->warn("No perception cameras configured, omni-perception will be disabled");
-  }
-
-  cv::Mat img;
-  std::list<auto_aim::Armor> armors;
-  std::list<auto_aim::Target> targets;
-  std::chrono::steady_clock::time_point t;
-  Eigen::Quaterniond q;
-  io::Camera camera(config_path);
-  io::Gimbal gimbal(config_path);
-
-  tools::ThreadSafeQueue<std::optional<auto_aim::Target>, true> target_queue(1);
-  target_queue.push(std::nullopt);
-  tools::ThreadSafeQueue<std::optional<io::Command>, true> omni_command_queue(1);
-  omni_command_queue.push(std::nullopt);
-
-  auto last_omni_time = std::chrono::steady_clock::now();
-  io::Command last_omni_command{false, false, 0, 0};
-
-  std::atomic<bool> quit = false;
-  auto plan_thread = std::thread([&]() {
-    uint16_t last_bullet_count = 0;
-
-    while (!quit) {
-      auto gs = gimbal.state();
-      auto omni_opt = omni_command_queue.front();
-
-      Plan plan;
-      if (omni_opt.has_value()) {
-        auto & cmd = omni_opt.value();
-        plan.control = cmd.control;
-        plan.fire = cmd.shoot;
-        plan.yaw = static_cast<float>(tools::limit_rad(cmd.yaw + gs.yaw));
-        plan.pitch = static_cast<float>(cmd.pitch);
-        plan.yaw_vel = 0;
-        plan.yaw_acc = 0;
-        plan.pitch_vel = 0;
-        plan.pitch_acc = 0;
-      } else {
-        auto target_opt = target_queue.front();
-        if (target_opt.has_value()) {
-          plan = planner.plan(target_opt.value(), gs.bullet_speed);
-        } else {
-          plan = Plan{};
-        }
-      }
-
-      gimbal.send(
-        plan.control, plan.fire, plan.yaw, plan.yaw_vel, plan.yaw_acc, plan.pitch, plan.pitch_vel,
-        plan.pitch_acc);
-
-      auto fired = gs.bullet_count > last_bullet_count;
-      last_bullet_count = gs.bullet_count;
-      if (fired) {
-        tools::logger()->info(
-          "[FIRE] bullet_count={} plan_fire={} omni={}", gs.bullet_count, plan.fire,
-          omni_opt.has_value());
-      }
-
-      std::this_thread::sleep_for(10ms);
-    }
-  });
-
-  while (!exiter.exit()) {
-    camera.read(img, t);
-    if (img.empty()) break;
-
-    q = gimbal.q(t - 1ms);
-
-    solver.set_R_gimbal2world(q);
-    Eigen::Vector3d gimbal_pos = tools::eulers(solver.R_gimbal2world(), 2, 1, 0);
-    (void)gimbal_pos;
-
-    armors = yolo.detect(img);
-
-    armor_selector.set_invincible_enemy_ids({});
-    armor_selector.armor_filter(armors, omniperception::ArmorFilterScope::MainAim);
-    armor_selector.set_priority(armors);
-
-    std::vector<omniperception::DetectionResult> raw_detection_queue;
-    std::vector<omniperception::DetectionResult> decision_queue;
-    if (perceptron) {
-      raw_detection_queue = perceptron->get_detection_queue();
-      decision_queue = raw_detection_queue;
-      decider.sort(decision_queue);
-    }
-
-    targets = tracker.track(armors, t);
-
-    if (tracker.state() == "lost" && !decision_queue.empty()) {
-      auto cmd = decider.decide(decision_queue);
-      cmd.control = true;
-      cmd.shoot = false;
-      omni_command_queue.push(cmd);
-      target_queue.push(std::nullopt);
-      last_omni_command = cmd;
-      last_omni_time = std::chrono::steady_clock::now();
-    } else if (!targets.empty()) {
-      target_queue.push(targets.front());
-      omni_command_queue.push(std::nullopt);
-      last_omni_command = {false, false, 0, 0};
-    } else {
-      auto now = std::chrono::steady_clock::now();
-      auto duration =
-        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_omni_time).count();
-      if (duration < omni_memory_duration_ms && last_omni_command.control) {
-        omni_command_queue.push(last_omni_command);
-      } else {
-        omni_command_queue.push(std::nullopt);
-      }
-      target_queue.push(std::nullopt);
-    }
-
-    if (cv::waitKey(1) == 'q') break;
-  }
-
-  quit = true;
-  if (plan_thread.joinable()) plan_thread.join();
-  gimbal.send(false, false, 0, 0, 0, 0, 0, 0);
-
-  return 0;
 }

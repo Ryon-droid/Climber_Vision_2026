@@ -2,7 +2,6 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <memory>
@@ -10,60 +9,85 @@
 
 #include "tasks/auto_aim/yolo.hpp"
 #include "tools/exiter.hpp"
-#include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
 
 namespace omniperception
 {
 Perceptron::Perceptron(
-  const std::vector<io::USBCamera *> & cameras, const std::string & config_path, bool debug)
-: config_path_(config_path),
-  queue_full_count_(0),
-  detection_queue_(10, [this] { queue_full_count_.fetch_add(1, std::memory_order_relaxed); }),
-  rr_index_(0),
-  decider_(config_path),
-  stop_flag_(false),
-  debug_(debug)
+  io::USBCamera * usbcam1, io::USBCamera * usbcam2, const std::string & config_path)
+: config_path_(config_path), detection_queue_(10), decider_(config_path), stop_flag_(false)
 {
-  cameras_ = cameras;
-  cameras_.erase(std::remove(cameras_.begin(), cameras_.end(), nullptr), cameras_.end());
-
-  if (cameras_.empty()) {
-    tools::logger()->error("No cameras available! System cannot start.");
-    throw std::runtime_error("No cameras available");
-  }
-
   // 读取配置文件，为感知相机创建单独的配置
   auto yaml = YAML::LoadFile(config_path);
   std::string perception_device = "CPU";  // 默认使用CPU
   if (yaml["perception_device"]) {
     perception_device = yaml["perception_device"].as<std::string>();
   }
-
+  
   tools::logger()->info("Perception cameras using device: {}", perception_device);
-
+  
   // 创建临时配置文件，强制感知相机使用指定设备
   std::string temp_config_path = "/tmp/perception_config.yaml";
   yaml["device"] = perception_device;
   std::ofstream temp_config(temp_config_path);
   temp_config << yaml;
   temp_config.close();
-
+  
   // 初始化 YOLO，使用感知相机专用配置
   yolo_ = std::make_shared<auto_aim::YOLO>(temp_config_path, false);
 
   std::this_thread::sleep_for(std::chrono::seconds(2));
 
-  tools::logger()->info("Perceptron camera order (RR):");
-  for (size_t i = 0; i < cameras_.size(); ++i) {
-    tools::logger()->info("  [{}] {}", i, cameras_[i]->device_name);
+  // Sort cameras based on device_name (sharpness)
+  std::vector<io::USBCamera *> cameras = {usbcam1, usbcam2};
+  io::USBCamera * sorted_cams[4] = {nullptr, nullptr, nullptr, nullptr};
+  std::vector<io::USBCamera *> unknown_cams;
+  int available_camera_count = 0;
+
+  for (auto cam : cameras) {
+    if (cam == nullptr) {
+      continue;  // 跳过空指针相机
+    }
+    available_camera_count++;
+    if (cam->device_name.find("camera_back_right") != std::string::npos) sorted_cams[0] = cam;
+    else if (cam->device_name.find("camera_back_left") != std::string::npos) sorted_cams[1] = cam;
+    // else if (cam->device_name.find("camera_back_right") != std::string::npos) sorted_cams[2] = cam;
+    // else if (cam->device_name.find("camera_back_left") != std::string::npos) sorted_cams[3] = cam;
+    else unknown_cams.push_back(cam);
   }
 
-  tools::logger()->info("Perceptron debug image output: {}", debug_ ? "ON" : "OFF");
+  if (available_camera_count == 0) {
+    tools::logger()->error("No cameras available! System cannot start.");
+    throw std::runtime_error("No cameras available");
+  }
 
-  // 创建推理线程（单线程、轮询推理）
-  inference_thread_ = std::thread([this] { inference_loop(); });
+  tools::logger()->info("Available cameras: {}/4", available_camera_count);
 
+  // Fill in missing slots with unknown cameras
+  int unknown_idx = 0;
+  for (int i = 0; i < 4; ++i) {
+    if (sorted_cams[i] == nullptr) {
+      if (unknown_idx < unknown_cams.size()) {
+        sorted_cams[i] = unknown_cams[unknown_idx++];
+        tools::logger()->warn("Camera slot {} filled with unknown camera: {}", i + 1, sorted_cams[i]->device_name);
+      } else {
+        tools::logger()->warn("Camera slot {} is offline/unavailable", i + 1);
+      }
+    } else {
+      tools::logger()->info("Camera slot {} assigned to {}", i + 1, sorted_cams[i]->device_name);
+    }
+  }
+
+  auto c1 = sorted_cams[0];
+  auto c2 = sorted_cams[1];
+  // auto c3 = sorted_cams[2];
+  // auto c4 = sorted_cams[3];
+
+  // 创建推理线程
+  inference_thread_ = std::thread([this, c1, c2] {
+    inference_loop(c1, c2);
+  });
+  
   tools::logger()->info("Perceptron initialized.");
 }
 
@@ -71,9 +95,9 @@ Perceptron::~Perceptron()
 {
   {
     std::unique_lock<std::mutex> lock(mutex_);
-    stop_flag_ = true;
+    stop_flag_ = true;  // 设置退出标志
   }
-  condition_.notify_all();
+  condition_.notify_all();  // 唤醒所有等待的线程
 
   if (inference_thread_.joinable()) {
     inference_thread_.join();
@@ -86,6 +110,7 @@ std::vector<DetectionResult> Perceptron::get_detection_queue()
   std::vector<DetectionResult> result;
   DetectionResult temp;
 
+
   while (!detection_queue_.empty()) {
     detection_queue_.pop(temp);
     result.push_back(std::move(temp));
@@ -94,18 +119,63 @@ std::vector<DetectionResult> Perceptron::get_detection_queue()
   return result;
 }
 
-void Perceptron::inference_loop()
+// [LEGACY] 历史遗留函数：将拼接图的象限坐标映射回单相机坐标系。
+// 顺序推理模式已不再使用该函数，保留以备参考。
+// void Perceptron::adjust_armor_coordinates(
+//   auto_aim::Armor & armor, int offset_x, int offset_y, double scale_x, double scale_y, int width,
+//   int height)
+// {
+//   cv::Point2f offset(offset_x, offset_y);
+
+//   auto adjust_point = [&](cv::Point2f & p) {
+//     p -= offset;
+//     p.x *= scale_x;
+//     p.y *= scale_y;
+//   };
+
+//   adjust_point(armor.center);
+//   for (auto & p : armor.points) adjust_point(p);
+
+//   armor.box.x -= offset_x;
+//   armor.box.y -= offset_y;
+//   armor.box.x = static_cast<int>(armor.box.x * scale_x);
+//   armor.box.y = static_cast<int>(armor.box.y * scale_y);
+//   armor.box.width = static_cast<int>(armor.box.width * scale_x);
+//   armor.box.height = static_cast<int>(armor.box.height * scale_y);
+
+//   // Adjust lightbars
+//   adjust_point(armor.left.center);
+//   adjust_point(armor.left.top);
+//   adjust_point(armor.left.bottom);
+//   for (auto & p : armor.left.points) adjust_point(p);
+//   adjust_point(armor.left.rotated_rect.center);
+//   armor.left.rotated_rect.size.width *= scale_x;
+//   armor.left.rotated_rect.size.height *= scale_y;
+
+//   adjust_point(armor.right.center);
+//   adjust_point(armor.right.top);
+//   adjust_point(armor.right.bottom);
+//   for (auto & p : armor.right.points) adjust_point(p);
+//   adjust_point(armor.right.rotated_rect.center);
+//   armor.right.rotated_rect.size.width *= scale_x;
+//   armor.right.rotated_rect.size.height *= scale_y;
+
+//   // Recalculate center_norm
+//   armor.center_norm.x = armor.center.x / width;
+//   armor.center_norm.y = armor.center.y / height;
+// }
+
+void Perceptron::inference_loop(
+  io::USBCamera * cam1, io::USBCamera * cam2)
 {
-  if (cameras_.empty()) {
-    tools::logger()->error("No camera pointers available! Cannot run inference.");
+  // 检查至少有一个相机可用
+  if (!cam1 && !cam2) {
+    tools::logger()->error("All camera pointers are null! Cannot run inference.");
     return;
   }
 
-  tools::logger()->info("Inference loop started (round-robin), camera count: {}", cameras_.size());
-
-  constexpr int read_timeout_ms = 2;
-  uint64_t last_logged_queue_full_count = 0;
-  auto last_queue_log_time = std::chrono::steady_clock::now();
+  tools::logger()->info("Inference loop started (sequential) with cameras: {} {}",
+    cam1 ? "cam1" : "X", cam2 ? "cam2" : "X");
 
   try {
     while (true) {
@@ -114,67 +184,51 @@ void Perceptron::inference_loop()
         if (stop_flag_) break;
       }
 
-      auto * cam = cameras_[rr_index_];
-      rr_index_ = (rr_index_ + 1) % cameras_.size();
+      cv::Mat img1, img2;
+      std::chrono::steady_clock::time_point ts1, ts2;
 
-      if (!cam) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      bool any_valid = false;
+      if (cam1) {
+        cam1->read(img1, ts1);
+        if (!img1.empty()) any_valid = true;
+      }
+      if (cam2) {
+        cam2->read(img2, ts2);
+        if (!img2.empty()) any_valid = true;
+      }
+      if (!any_valid) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
         continue;
       }
 
-      cv::Mat img;
-      std::chrono::steady_clock::time_point ts;
-      bool got_frame = cam->read(img, ts, read_timeout_ms);
-      if (!got_frame || img.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        continue;
-      }
+      auto process_and_push = [&](std::list<auto_aim::Armor> & cam_armors, io::USBCamera * cam, std::chrono::steady_clock::time_point ts, const cv::Mat & img) {
+        if (!cam || img.empty()) return;  // 跳过离线相机
 
-      auto armors = yolo_->detect(img);
-
-      DetectionResult dr;
-      dr.armors = std::move(armors);
-      dr.timestamp = ts;
-      dr.camera_name = cam->device_name;
-
-      if (!dr.armors.empty()) {
-        auto delta_angle = decider_.delta_angle(dr.armors, dr.camera_name);
-        dr.delta_yaw = delta_angle[0] / 57.3;
-        dr.delta_pitch = delta_angle[1] / 57.3;
-      } else {
-        dr.delta_yaw = 0;
-        dr.delta_pitch = 0;
-      }
-
-      if (debug_) {
+        DetectionResult dr;
+        dr.armors = std::move(cam_armors);
+        dr.timestamp = ts;
+        dr.camera_name = cam->device_name;
         dr.img = img.clone();
+
         if (!dr.armors.empty()) {
-          for (const auto & armor : dr.armors) {
-            tools::draw_points(dr.img, armor.points, {0, 255, 0});
-          }
+          auto delta_angle = decider_.delta_angle(dr.armors, dr.camera_name);
+          dr.delta_yaw = delta_angle[0] / 57.3;
+          dr.delta_pitch = delta_angle[1] / 57.3;
+        } else {
+          dr.delta_yaw = 0;
+          dr.delta_pitch = 0;
         }
+        detection_queue_.push(dr);
+      };
 
-        cv::putText(
-          dr.img, dr.camera_name, cv::Point(12, 30), cv::FONT_HERSHEY_SIMPLEX, 0.8,
-          cv::Scalar(0, 255, 255), 2);
+      // 顺序单相机推理
+      if (cam1 && !img1.empty()) {
+        auto armors1 = yolo_->detect(img1);
+        process_and_push(armors1, cam1, ts1, img1);
       }
-
-      detection_queue_.push(dr);
-
-      if (debug_) {
-        auto now = std::chrono::steady_clock::now();
-        if (now - last_queue_log_time >= std::chrono::seconds(1)) {
-          auto total_full_count = queue_full_count_.load(std::memory_order_relaxed);
-          auto delta_full_count = total_full_count - last_logged_queue_full_count;
-          if (delta_full_count > 0) {
-            tools::logger()->warn(
-              "Perceptron detection queue full {} times in last 1s (total {}), dropping oldest frame "
-              "to keep latest",
-              delta_full_count, total_full_count);
-          }
-          last_logged_queue_full_count = total_full_count;
-          last_queue_log_time = now;
-        }
+      if (cam2 && !img2.empty()) {
+        auto armors2 = yolo_->detect(img2);
+        process_and_push(armors2, cam2, ts2, img2);
       }
     }
   } catch (const std::exception & e) {

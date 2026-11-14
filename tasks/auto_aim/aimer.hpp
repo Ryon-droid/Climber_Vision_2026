@@ -6,7 +6,6 @@
 #include <list>
 #include <optional>
 
-#include "io/cboard.hpp"
 #include "io/command.hpp"
 #include "target.hpp"
 
@@ -33,19 +32,26 @@ public:
   //   // io::ShootMode shoot_mode,
   //    bool to_now = true);
 
+  double GetFlyTime() const { return last_fly_time_; }
+  bool IsSpinningTop() const { return is_spinning_top_; }
+  double GetCenterYaw() const { return center_yaw_; }
+
 private:
   double yaw_offset_;
   std::optional<double> left_yaw_offset_, right_yaw_offset_;
   double pitch_offset_;
-  double outpost_pitch_offset_;
   double comming_angle_;
   double leaving_angle_;
   double lock_id_ = -1;
   double high_speed_delay_time_;
   double low_speed_delay_time_;
   double decision_speed_;
-  double air_resistance_k_ = 0.0;
   Eigen::Matrix3d R_gimbal2imubody_;
+  std::string robot_type_;
+
+  bool is_spinning_top_ = false;
+  double last_fly_time_ = 0.0;
+  double center_yaw_ = 0.0; // 机器人类型（hero或其他）
 
   AimPoint choose_aim_point(const Target & target);
 };

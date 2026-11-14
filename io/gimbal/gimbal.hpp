@@ -3,7 +3,6 @@
 
 #include <Eigen/Geometry>
 #include <atomic>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <mutex>
@@ -12,16 +11,16 @@
 #include <tuple>
 
 #include "serial/serial.h"
-#include "tools/thread_safe_queue.hpp"
 #include "tasks/auto_aim/solver.hpp"
+#include "tools/bullet_speed_filter.hpp"
+#include "tools/thread_safe_queue.hpp"
 
 namespace io
 {
 struct __attribute__((packed)) GimbalToVision
 {
   uint8_t head[2] = {'G', 'V'};
-  uint8_t mode;  // 0: 空闲, 1: 自瞄, 2: 小符, 3: 大符
-  // float q[4];    // wxyz顺序
+  uint8_t mode;  // 0: 空闲, 1: 自瞄, 2: 吊射
   float yaw;
   float yaw_vel;
   float pitch;
@@ -51,10 +50,9 @@ static_assert(sizeof(VisionToGimbal) <= 64);
 
 enum class GimbalMode
 {
-  IDLE,        // 空闲
-  AUTO_AIM,    // 自瞄
-  SMALL_BUFF,  // 小符
-  BIG_BUFF     // 大符
+  IDLE,      // 空闲
+  AUTO_AIM,  // 自瞄
+  LOBSHOT    // 吊射
 };
 
 struct GimbalState
@@ -83,8 +81,6 @@ public:
     bool control, bool fire, float yaw, float yaw_vel, float yaw_acc, float pitch, float pitch_vel,
     float pitch_acc);
 
-  void send(io::VisionToGimbal VisionToGimbal);
-
 private:
   serial::Serial serial_;
 
@@ -103,14 +99,9 @@ private:
   bool speed_control_ = false;
   double bullet_speed_config_ = 0.0;
   bool auto_fire_ = false;
-  std::array<float, 3> bullet_speed_samples_ = {0.0F, 0.0F, 0.0F};
-  size_t bullet_speed_sample_count_ = 0;
-  size_t bullet_speed_sample_index_ = 0;
-  float last_bullet_speed_sample_ = 0.0F;
-  bool has_last_bullet_speed_sample_ = false;
+  tools::BulletSpeedFilter bullet_speed_filter_{3};
 
   auto_aim::Solver solver_;
-
 
   bool read(uint8_t * buffer, size_t size);
   void read_thread();

@@ -90,7 +90,6 @@ void Solver::set_R_gimbal2world(const Eigen::Quaterniond & q)
   Eigen::Matrix3d R_imubody2imuabs = q.toRotationMatrix();
   R_gimbal2world_ = R_gimbal2imubody_.transpose() * R_imubody2imuabs * R_gimbal2imubody_;
 
-
   // auto t1 = std::chrono::steady_clock::now();
   // double ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(t1 - t0).count();
   // tools::logger()->debug("[Solver] set_R_gimbal2world cost: {:.3f} ms", ms);

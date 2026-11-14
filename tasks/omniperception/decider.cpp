@@ -2,7 +2,6 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include <algorithm>
 #include <filesystem>
 #include <opencv2/opencv.hpp>
 
@@ -11,24 +10,22 @@
 
 namespace omniperception
 {
-Decider::Decider(const std::string & config_path)
-: count_(0), armor_selector_(config_path), detector_(config_path)
+Decider::Decider(const std::string & config_path) : detector_(config_path), count_(0)
 {
   auto yaml = YAML::LoadFile(config_path);
   img_width_ = yaml["image_width"].as<double>();
   img_height_ = yaml["image_height"].as<double>();
   default_fov_h_ = yaml["default_fov_h"].as<double>();
   default_fov_v_ = yaml["default_fov_v"].as<double>();
-  default_perception_pitch_offset_ = 0.0;
-  if (yaml["perception_pitch_offset"]) {
-    default_perception_pitch_offset_ = yaml["perception_pitch_offset"].as<double>();
-  }
+  enemy_color_ =
+    (yaml["enemy_color"].as<std::string>() == "red") ? auto_aim::Color::red : auto_aim::Color::blue;
+  mode_ = yaml["mode"].as<double>();
 
   // 读取相机偏角与视场配置，允许标量（仅偏角）或映射（偏角+视场）两种格式
   if (yaml["camera_name_map"]) {
     for (const auto & node : yaml["camera_name_map"]) {
       const auto cam_name = node.first.as<std::string>();
-      CameraViewConfig cfg{0.0, default_fov_h_, default_fov_v_, default_perception_pitch_offset_};
+      CameraViewConfig cfg{0.0, default_fov_h_, default_fov_v_};
 
       try {
         const auto & value = node.second;
@@ -38,7 +35,6 @@ Decider::Decider(const std::string & config_path)
           if (value["yaw"]) cfg.yaw_deg = value["yaw"].as<double>();
           if (value["fov_h"]) cfg.fov_h_deg = value["fov_h"].as<double>();
           if (value["fov_v"]) cfg.fov_v_deg = value["fov_v"].as<double>();
-          if (value["pitch_offset"]) cfg.pitch_offset_deg = value["pitch_offset"].as<double>();
         } else {
           tools::logger()->warn("camera_name_map entry for {} is neither scalar nor map", cam_name);
           continue;
@@ -46,8 +42,8 @@ Decider::Decider(const std::string & config_path)
 
         camera_views_[cam_name] = cfg;
         tools::logger()->info(
-          "Camera {} yaw offset {:.2f} deg, fov_h {:.1f}, fov_v {:.1f}, pitch offset {:.2f} deg",
-          cam_name, cfg.yaw_deg, cfg.fov_h_deg, cfg.fov_v_deg, cfg.pitch_offset_deg);
+          "Camera {} yaw offset {:.2f} deg, fov_h {:.1f}, fov_v {:.1f}", cam_name, cfg.yaw_deg,
+          cfg.fov_h_deg, cfg.fov_v_deg);
       } catch (const std::exception & e) {
         tools::logger()->warn("Failed to parse camera_name_map for {}: {}", cam_name, e.what());
       }
@@ -80,7 +76,7 @@ Eigen::Vector2d Decider::delta_angle(
   Eigen::Vector2d delta_angle = Eigen::Vector2d::Zero();
   if (armors.empty()) return delta_angle;
 
-  CameraViewConfig cfg{0.0, default_fov_h_, default_fov_v_, default_perception_pitch_offset_};
+  CameraViewConfig cfg{0.0, default_fov_h_, default_fov_v_};
   auto it = camera_views_.find(camera);
   if (it != camera_views_.end()) {
     cfg = it->second;
@@ -91,18 +87,44 @@ Eigen::Vector2d Decider::delta_angle(
   //计算偏转角度
   const auto & armor = armors.front();
   delta_angle[0] = cfg.yaw_deg + (cfg.fov_h_deg / 2.0) - armor.center_norm.x * cfg.fov_h_deg;
-  delta_angle[1] = armor.center_norm.y * cfg.fov_v_deg - cfg.fov_v_deg / 2.0 + cfg.pitch_offset_deg;
+  delta_angle[1] = armor.center_norm.y * cfg.fov_v_deg - cfg.fov_v_deg / 2.0;
   return delta_angle;
 }
 
 bool Decider::armor_filter(std::list<auto_aim::Armor> & armors)
 {
-  return armor_selector_.armor_filter(armors, ArmorFilterScope::OmniPerception);
+  if (armors.empty()) return true;
+  // 过滤非敌方装甲板
+  armors.remove_if([&](const auto_aim::Armor & a) { return a.color != enemy_color_; });
+
+  // 25赛季没有5号装甲板
+  armors.remove_if([&](const auto_aim::Armor & a) { return a.name == auto_aim::ArmorName::five; });
+  // 不打工程
+  // armors.remove_if([&](const auto_aim::Armor & a) { return a.name == auto_aim::ArmorName::two; });
+  // 不打前哨站
+  armors.remove_if(
+    [&](const auto_aim::Armor & a) { return a.name == auto_aim::ArmorName::outpost; });
+
+  // 过滤掉刚复活无敌的装甲板
+  armors.remove_if([&](const auto_aim::Armor & a) {
+    return std::find(invincible_armor_.begin(), invincible_armor_.end(), a.name) !=
+           invincible_armor_.end();
+  });
+
+  return armors.empty();
 }
 
 void Decider::set_priority(std::list<auto_aim::Armor> & armors)
 {
-  armor_selector_.set_priority(armors);
+  if (armors.empty()) return;
+
+  const PriorityMap & priority_map = (mode_ == MODE_ONE) ? mode1 : mode2;
+
+  if (!armors.empty()) {
+    for (auto & armor : armors) {
+      armor.priority = priority_map.at(armor.name);
+    }
+  }
 }
 
 void Decider::sort(std::vector<DetectionResult> & detection_queue)
@@ -157,7 +179,14 @@ Eigen::Vector4d Decider::get_target_info(
 
 void Decider::get_invincible_armor(const std::vector<int8_t> & invincible_enemy_ids)
 {
-  armor_selector_.set_invincible_enemy_ids(invincible_enemy_ids);
+  invincible_armor_.clear();
+
+  if (invincible_enemy_ids.empty()) return;
+
+  for (const auto & id : invincible_enemy_ids) {
+    tools::logger()->info("invincible armor id: {}", id);
+    invincible_armor_.push_back(auto_aim::ArmorName(id - 1));
+  }
 }
 
 void Decider::get_auto_aim_target(

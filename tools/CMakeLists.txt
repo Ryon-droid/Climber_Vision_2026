@@ -8,15 +8,8 @@ add_library(tools OBJECT
     math_tools.cpp
     plotter.cpp
     trajectory.cpp
-    air_resist_trajectory.cpp
     recorder.cpp
-    replay_reader.cpp
-    replay_utils.cpp
-    stats.cpp
     logger.cpp
     pid.cpp
     crc.cpp
 )
-
-add_library(frame_source STATIC frame_source.cpp)
-target_link_libraries(frame_source PUBLIC tools io)

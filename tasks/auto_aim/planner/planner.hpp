@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include <list>
 #include <optional>
+#include <string>
 
 #include "tasks/auto_aim/target.hpp"
 #include "tinympc/tiny_api.hpp"
@@ -29,6 +30,9 @@ struct Plan
   float pitch;
   float pitch_vel;
   float pitch_acc;
+  float fire_error;
+  float fire_error_threshold;
+  float fire_target_distance;
 };
 
 class Planner
@@ -38,17 +42,14 @@ public:
   Planner(const std::string & config_path);
 
   Plan plan(Target target, double bullet_speed);
-  Plan plan(std::optional<Target> target, double bullet_speed,
-    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
-  bool fixed_armor_trajectory_enabled() const { return fixed_armor_trajectory_; }
+  Plan plan(std::optional<Target> target, double bullet_speed);
 
 private:
   double yaw_offset_;
   double pitch_offset_;
   double fire_thresh_;
   double low_speed_delay_time_, high_speed_delay_time_, decision_speed_;
-  double air_resistance_k_ = 0.0;
-  bool fixed_armor_trajectory_ = false;
+  bool use_air_resistance_ = false;
 
   TinySolver * yaw_solver_;
   TinySolver * pitch_solver_;
@@ -56,9 +57,8 @@ private:
   void setup_yaw_solver(const std::string & config_path);
   void setup_pitch_solver(const std::string & config_path);
 
-  Eigen::Matrix<double, 2, 1> aim(
-    const Target & target, double bullet_speed, int armor_index = -1);
-  Trajectory get_trajectory(Target & target, double yaw0, double bullet_speed, int armor_index);
+  Eigen::Matrix<double, 2, 1> aim(const Target & target, double bullet_speed);
+  Trajectory get_trajectory(Target & target, double yaw0, double bullet_speed);
 };
 
 }  // namespace auto_aim

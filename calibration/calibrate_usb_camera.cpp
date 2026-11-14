@@ -16,7 +16,7 @@
 
 const std::string keys =
   "{help h usage ? |                          | 输出命令行参数说明}"
-  "{@config-path   | configs/calibration.yaml      | yaml配置文件路径（包含USB相机配置）}";
+  "{config-path c  | configs/calibration.yaml      | yaml配置文件路径（包含USB相机配置）}";
 
 std::vector<cv::Point3f> centers_3d(const cv::Size & pattern_size, const float center_distance)
 {
@@ -66,7 +66,7 @@ int main(int argc, char * argv[])
     cli.printMessage();
     return 0;
   }
-  auto config_path = cli.get<std::string>(0);
+  auto config_path = cli.get<std::string>("config-path");
 
   // 读取YAML配置，列举可用的USB相机
   auto yaml = YAML::LoadFile(config_path);

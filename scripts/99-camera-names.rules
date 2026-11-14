@@ -1,0 +1,10 @@
+# USB相机固定设备名规则
+# 根据USB端口位置绑定相机到固定设备名
+# 安装方法：sudo cp 99-camera-names.rules /etc/udev/rules.d/
+# 重新加载：sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# 后置左相机 (USB端口 1-5, icspring camera)
+SUBSYSTEM=="video4linux", KERNELS=="1-5:1.0", ATTR{index}=="0", SYMLINK+="camera_back_left", GROUP="video", MODE="0666"
+
+# 后置右相机 (USB端口 1-3, icspring camera)
+SUBSYSTEM=="video4linux", KERNELS=="1-3:1.0", ATTR{index}=="0", SYMLINK+="camera_back_right", GROUP="video", MODE="0666"

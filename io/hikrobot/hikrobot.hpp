@@ -16,7 +16,9 @@ namespace io
 class HikRobot : public CameraBase
 {
 public:
-  HikRobot(double exposure_ms, double gain, const std::string &vid_pid);
+  HikRobot(
+    double exposure_ms, double gain, const std::string & vid_pid,
+    const std::string & user_id = "", const std::string & serial_number = "");
   ~HikRobot() override;
   void read(cv::Mat & img, std::chrono::steady_clock::time_point & timestamp) override;
 
@@ -31,24 +33,27 @@ private:
   double gain_;
 
   std::thread daemon_thread_;
-  std::atomic<bool> daemon_quit_;
+  std::atomic<bool> daemon_quit_{false};
 
-  void * handle_;
+  void * handle_ = nullptr;
   std::thread capture_thread_;
-  std::atomic<bool> capturing_;
-  std::atomic<bool> capture_quit_;
+  std::atomic<bool> capturing_{false};
+  std::atomic<bool> capture_quit_{false};
   tools::ThreadSafeQueue<CameraData> queue_;
 
   int vid_, pid_;
-  // std::string user_id_;
+  std::string user_id_;
+  std::string serial_number_;
 
   void capture_start();
   void capture_stop();
+  void release_handle();
 
   void set_float_value(const std::string & name, double value);
   void set_enum_value(const std::string & name, unsigned int value);
 
   void set_vid_pid(const std::string & vid_pid);
+  bool match_device_info(const MV_CC_DEVICE_INFO * device_info) const;
   void reset_usb() const;
 };
 

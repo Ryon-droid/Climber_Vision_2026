@@ -19,9 +19,8 @@
 #include "io/camera.hpp"
 
 const std::string keys =
-    "{d display      | false | enable debug window}"
     "{help h usage ? |      | 输出命令行参数说明 }"
-    "{@config-path   | configs/test_aim.yaml | yaml配置文件的路径}";
+    "{config-path c  | configs/hero.yaml | yaml配置文件的路径}";
 
 int main(int argc, char *argv[])
 {
@@ -32,10 +31,9 @@ int main(int argc, char *argv[])
         return 0;
     }
     
-    auto config_path = cli.get<std::string>(0);
+    auto config_path = cli.get<std::string>("config-path");
     auto yaml = tools::load(config_path);
     auto use_tradition = tools::read<bool>(yaml, "use_traditional");
-    const bool display = cli.has("d") || cli.has("display");
     
     if (!cli.check()) {
         cli.printErrors();
@@ -51,7 +49,7 @@ int main(int argc, char *argv[])
     auto_aim::Tracker tracker(config_path, solver);
     auto_aim::Aimer aimer(config_path);
 
-    cv::Mat img;
+    cv::Mat img, drawing;
     std::list<auto_aim::Armor> armors;
     std::list<auto_aim::Target> targets;
     std::chrono::steady_clock::time_point t;
@@ -69,11 +67,7 @@ int main(int argc, char *argv[])
         if (use_tradition) armors = detector.detect(img);
         else armors = yolo.detect(img);
 
-        cv::Mat draw_img;
-
-        if (display)
-        {
-            draw_img = img.clone();
+        cv::Mat draw_img = img.clone();
         for(const auto & armor : armors){
             // std::vector<cv::Point> armor_point(4);
             // for(int i=0;i<4;i++){
@@ -87,12 +81,9 @@ int main(int argc, char *argv[])
                 auto_aim::ARMOR_TYPES[armor.type]),
                  armor.center);
         }
-        }
 
         targets = tracker.track(armors, t);
 
-        if (display)
-        {
         if (!targets.empty())
         {
             auto target = targets.front();
@@ -122,19 +113,14 @@ int main(int argc, char *argv[])
             auto dt = tools::delta_time(now, last);
             tools::logger()->info("{:.2f} fps", 1 / dt);
         }
-            if (!armors.empty()) {
-                solver.draw_armor_info(draw_img, armors.front());
-            }
-            cv::resize(draw_img, draw_img, {}, 0.5, 0.5);
+            solver.draw_armor_info(draw_img, armors.front());
+            cv::resize(draw_img, draw_img, {}, 0.5, 0.5); // 显示时缩小图片尺寸
             cv::putText(draw_img, fmt::format("{}", use_tradition ? "CV" : "YOLO"), {10, 30}, cv::FONT_HERSHEY_SIMPLEX, 1, {0, 255, 0}, 2);
             cv::imshow("reprojection", draw_img);
 
-            auto key = cv::waitKey(30);
-            if (key == 'q')
-            {
-                break;
-            }
-        }
+        auto key = cv::waitKey(30);
+        if (key == 'q')
+            break;
     }
 
     return 0;

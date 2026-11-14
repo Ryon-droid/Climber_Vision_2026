@@ -1,11 +1,9 @@
 #ifndef OMNIPERCEPTION__PERCEPTRON_HPP
 #define OMNIPERCEPTION__PERCEPTRON_HPP
 
-#include <atomic>
 #include <chrono>
 #include <list>
 #include <memory>
-#include <vector>
 
 #include "decider.hpp"
 #include "detection.hpp"
@@ -21,28 +19,30 @@ class Perceptron
 {
 public:
   Perceptron(
-    const std::vector<io::USBCamera *> & cameras, const std::string & config_path,
-    bool debug = false);
+    io::USBCamera * usbcma1, io::USBCamera * usbcam2, const std::string & config_path);
 
   ~Perceptron();
 
   std::vector<DetectionResult> get_detection_queue();
 
 private:
-  void inference_loop();
+  void inference_loop(
+    io::USBCamera * cam1, io::USBCamera * cam2);  
+  // 调整识别到的装甲板坐标到各自相机坐标系
+  // [LEGACY] 历史遗留：用于拼接四象限坐标映射，顺序推理已不再使用
+  // [[deprecated("Legacy: used for stitched quadrant coordinate mapping; not used in sequential inference")]]
+  // void adjust_armor_coordinates(
+  //   auto_aim::Armor & armor, int offset_x, int offset_y, double scale_x, double scale_y, int width,
+  //   int height);
 
   std::string config_path_;
   std::thread inference_thread_;
-  std::atomic<uint64_t> queue_full_count_;
-  tools::ThreadSafeQueue<DetectionResult, true> detection_queue_;
+  tools::ThreadSafeQueue<DetectionResult> detection_queue_;
 
   std::shared_ptr<auto_aim::YOLO> yolo_;
-  std::vector<io::USBCamera *> cameras_;
-  size_t rr_index_;
 
   Decider decider_;
   bool stop_flag_;
-  bool debug_;
   mutable std::mutex mutex_;
   std::condition_variable condition_;
 };

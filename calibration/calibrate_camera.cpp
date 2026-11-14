@@ -19,8 +19,8 @@
 
 const std::string keys =
   "{help h usage ? |                          | 输出命令行参数说明}"
-  "{@config-path   | configs/calibration.yaml | yaml配置文件路径 }"
-  "{sharp-thresh s |          20              | 清晰度阈值（拉普拉斯方差），低于此值认为模糊}";
+  "{config-path   | configs/calibration.yaml | yaml配置文件路径 }"
+  "{sharp-thresh s |          5              | 清晰度阈值（拉普拉斯方差），低于此值认为模糊}";
 
 // ─────────────────── 工具 ───────────────────
 
@@ -68,7 +68,7 @@ int main(int argc, char * argv[])
     cli.printMessage();
     return 0;
   }
-  auto config_path = cli.get<std::string>(0);
+  auto config_path = cli.get<std::string>("config-path");
 
   // ---- 加载标定板参数 ----
   auto yaml_cfg = YAML::LoadFile(config_path);
@@ -80,7 +80,7 @@ int main(int argc, char * argv[])
   auto obj_pts_tmpl = board_corners(pattern_size, center_distance_mm);
 
   const double sharp_thresh = cli.get<double>("sharp-thresh");
-  const cv::Size subpix_win(5, 5);  // 改小亚像素窗口，防止较远时抓到相邻角点
+  const cv::Size subpix_win(11, 11);
   const cv::TermCriteria subpix_crit(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 20, 0.01);
 
   tools::logger()->info(

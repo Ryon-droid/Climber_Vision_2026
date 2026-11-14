@@ -1,15 +1,47 @@
 #include "planner.hpp"
 
+#include <algorithm>
 #include <vector>
 
 #include "tools/math_tools.hpp"
-#include "tools/air_resist_trajectory.hpp"
+#include "tools/trajectory.hpp"
 #include "tools/yaml.hpp"
 
 using namespace std::chrono_literals;
 
 namespace auto_aim
 {
+namespace
+{
+Eigen::Vector4d select_planner_xyza(const Target & target)
+{
+  const auto armor_xyza_list = target.armor_xyza_list();
+  if (armor_xyza_list.empty()) return Eigen::Vector4d::Zero();
+
+  // 前哨站：优先用 target.cpp 动态锁定的主打击面，和 Aimer/Shooter 保持一致，
+  // 而不是每帧都重新挑"当前离得最近"的那一面。
+  if (target.name == ArmorName::outpost && target.has_primary_armor_xyza()) {
+    return target.primary_armor_xyza();
+  }
+
+  auto best_xyza = armor_xyza_list.front();
+  auto min_dist = std::numeric_limits<double>::infinity();
+  for (const auto & xyza : armor_xyza_list) {
+    const auto dist = xyza.head<2>().norm();
+    if (dist < min_dist) {
+      min_dist = dist;
+      best_xyza = xyza;
+    }
+  }
+  return best_xyza;
+}
+
+double to_height_error_threshold(double angular_threshold, double distance)
+{
+  return std::max(distance, 1e-3) * std::tan(std::max(angular_threshold, 0.0));
+}
+}
+
 Planner::Planner(const std::string & config_path)
 {
   auto yaml = tools::load(config_path);
@@ -19,10 +51,9 @@ Planner::Planner(const std::string & config_path)
   decision_speed_ = tools::read<double>(yaml, "decision_speed");
   high_speed_delay_time_ = tools::read<double>(yaml, "high_speed_delay_time");
   low_speed_delay_time_ = tools::read<double>(yaml, "low_speed_delay_time");
-  air_resistance_k_ =
-    yaml["air_resistance_k"] ? yaml["air_resistance_k"].as<double>() : 0.0;
-  fixed_armor_trajectory_ =
-    yaml["fixed_armor_trajectory"] ? yaml["fixed_armor_trajectory"].as<bool>() : false;
+  if (yaml["robot_type"]) {
+    use_air_resistance_ = yaml["robot_type"].as<std::string>() == "hero";
+  }
 
   setup_yaw_solver(config_path);
   setup_pitch_solver(config_path);
@@ -32,44 +63,31 @@ Plan Planner::plan(Target target, double bullet_speed)
 {
   // 0. Check bullet speed
   if (bullet_speed < 10 || bullet_speed > 25) {
-    bullet_speed = 22;
+    bullet_speed = 11;
   }
 
   // 1. Predict fly_time
-  Eigen::Vector3d xyz;
-  auto min_dist = 1e10;
-  for (auto & xyza : target.armor_xyza_list()) {
-    auto dist = xyza.head<2>().norm();
-    if (dist < min_dist) {
-      min_dist = dist;
-      xyz = xyza.head<3>();
-    }
+  const auto selected_xyza = select_planner_xyza(target);
+  Eigen::Vector3d xyz = selected_xyza.head<3>();
+  auto min_dist = xyz.head<2>().norm();
+  auto bullet_traj = tools::Trajectory(
+    bullet_speed, min_dist, xyz.z(),
+    use_air_resistance_ ? tools::TrajectoryMethod::HERO_WITH_AIR_RESISTANCE
+                        : tools::TrajectoryMethod::WITHOUT_AIR_RESISTANCE);
+  if (bullet_traj.unsolvable) {
+    tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);
+    return {false};
   }
-  auto bullet_traj = tools::AirResistTrajectory(bullet_speed, min_dist, xyz.z(), air_resistance_k_);
   target.predict(bullet_traj.fly_time);
+  const Target target_at_hit = target;
 
   // 2. Get trajectory
   double yaw0;
   Trajectory traj;
   try {
-    int armor_index = -1;
-    const auto plates = target.armor_xyza_list();
-    if (fixed_armor_trajectory_ && plates.size() == 4) {
-      // Choose at impact time, then track that physical plate throughout this
-      // solve. Re-select on the next control cycle, never latch across targets.
-      double closest = 1e10;
-      for (int i = 0; i < static_cast<int>(plates.size()); ++i) {
-        const double distance = plates[i].head<2>().norm();
-        if (distance < closest) {
-          closest = distance;
-          armor_index = i;
-        }
-      }
-    }
-    yaw0 = aim(target, bullet_speed, armor_index)(0);
+    yaw0 = aim(target, bullet_speed)(0);
     const Eigen::Vector4d debug_xyza_at_hit = debug_xyza;
-    traj = get_trajectory(target, yaw0, bullet_speed, armor_index);
-    // get_trajectory 会在时域内多次调用 aim，恢复为击中时刻的调试点位用于可视化。
+    traj = get_trajectory(target, yaw0, bullet_speed);
     debug_xyza = debug_xyza_at_hit;
   } catch (const std::exception & e) {
     tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);
@@ -107,24 +125,49 @@ Plan Planner::plan(Target target, double bullet_speed)
   plan.pitch_acc = pitch_solver_->work->u(0, HALF_HORIZON);
 
   auto shoot_offset_ = 2;
-  plan.fire =
-    std::hypot(
-      traj(0, HALF_HORIZON + shoot_offset_) - yaw_solver_->work->x(0, HALF_HORIZON + shoot_offset_),
-      traj(2, HALF_HORIZON + shoot_offset_) -
-        pitch_solver_->work->x(0, HALF_HORIZON + shoot_offset_)) < fire_thresh_;
+  const int fire_index = HALF_HORIZON + shoot_offset_;
+  const double yaw_error =
+    tools::limit_rad(traj(0, fire_index) - yaw_solver_->work->x(0, fire_index));
+  const double pitch_cmd = pitch_solver_->work->x(0, fire_index);
+  const double pitch_target = traj(2, fire_index);
+
+  auto fire_target_state = target_at_hit;
+  fire_target_state.predict(DT * shoot_offset_);
+  const auto fire_target = select_planner_xyza(fire_target_state);
+  const double fire_target_distance = fire_target.head<2>().norm();
+  const double fire_target_height = fire_target.z();
+
+  double fire_error = std::numeric_limits<double>::infinity();
+  if (use_air_resistance_) {
+    tools::BallisticSolver solver(bullet_speed);
+    const double projected_distance = fire_target_distance * std::cos(yaw_error);
+    const double predicted_height = solver.calculateHeight(projected_distance, -pitch_cmd - pitch_offset_);
+    if (std::isfinite(predicted_height)) {
+      const double horizontal_error = fire_target_distance * std::sin(std::abs(yaw_error));
+      const double vertical_error = predicted_height - fire_target_height;
+      fire_error = std::hypot(horizontal_error, vertical_error);
+    }
+  } else {
+    fire_error = std::hypot(yaw_error, pitch_target - pitch_cmd);
+  }
+
+  plan.fire_target_distance = fire_target_distance;
+  plan.fire_error = fire_error;
+  plan.fire_error_threshold =
+    use_air_resistance_ ? to_height_error_threshold(fire_thresh_, fire_target_distance) : fire_thresh_;
+  plan.fire = fire_error < plan.fire_error_threshold;
   return plan;
 }
 
-Plan Planner::plan(std::optional<Target> target, double bullet_speed,
-  std::chrono::steady_clock::time_point now)
+Plan Planner::plan(std::optional<Target> target, double bullet_speed)
 {
   if (!target.has_value()) return {false};
 
   double delay_time =
     std::abs(target->ekf_x()[7]) > decision_speed_ ? high_speed_delay_time_ : low_speed_delay_time_;
+  tools::logger()->debug("Delay time: {:.2f} ms", delay_time * 1e3);
 
-  // tools::logger()->debug("Delay time: {:.2f} ms", delay_time * 1e3);
-  auto future = now + std::chrono::microseconds(int(delay_time * 1e6));
+  auto future = std::chrono::steady_clock::now() + std::chrono::microseconds(int(delay_time * 1e6));
 
   target->predict(future);
 
@@ -181,52 +224,37 @@ void Planner::setup_pitch_solver(const std::string & config_path)
   pitch_solver_->settings->max_iter = 10;
 }
 
-Eigen::Matrix<double, 2, 1> Planner::aim(
-  const Target & target, double bullet_speed, int armor_index)
+Eigen::Matrix<double, 2, 1> Planner::aim(const Target & target, double bullet_speed)
 {
-  Eigen::Vector3d xyz;
-  double yaw;
-  auto min_dist = 1e10;
-
-  const auto plates = target.armor_xyza_list();
-  if (armor_index >= 0) {
-    const auto & xyza = plates.at(armor_index);
-    min_dist = xyza.head<2>().norm();
-    xyz = xyza.head<3>();
-    yaw = xyza[3];
-  } else {
-    for (const auto & xyza : plates) {
-      const auto dist = xyza.head<2>().norm();
-      if (dist < min_dist) {
-        min_dist = dist;
-        xyz = xyza.head<3>();
-        yaw = xyza[3];
-      }
-    }
-  }
+  const auto selected_xyza = select_planner_xyza(target);
+  Eigen::Vector3d xyz = selected_xyza.head<3>();
+  double yaw = selected_xyza[3];
+  auto min_dist = xyz.head<2>().norm();
   debug_xyza = Eigen::Vector4d(xyz.x(), xyz.y(), xyz.z(), yaw);
 
   auto azim = std::atan2(xyz.y(), xyz.x());
-  auto bullet_traj = tools::AirResistTrajectory(bullet_speed, min_dist, xyz.z(), air_resistance_k_);
+  auto bullet_traj = tools::Trajectory(
+    bullet_speed, min_dist, xyz.z(),
+    use_air_resistance_ ? tools::TrajectoryMethod::HERO_WITH_AIR_RESISTANCE
+                        : tools::TrajectoryMethod::WITHOUT_AIR_RESISTANCE);
   if (bullet_traj.unsolvable) throw std::runtime_error("Unsolvable bullet trajectory!");
 
   return {tools::limit_rad(azim + yaw_offset_), -bullet_traj.pitch - pitch_offset_};
 }
 
-Trajectory Planner::get_trajectory(
-  Target & target, double yaw0, double bullet_speed, int armor_index)
+Trajectory Planner::get_trajectory(Target & target, double yaw0, double bullet_speed)
 {
   Trajectory traj;
 
   target.predict(-DT * (HALF_HORIZON + 1));
-  auto yaw_pitch_last = aim(target, bullet_speed, armor_index);
+  auto yaw_pitch_last = aim(target, bullet_speed);
 
   target.predict(DT);  // [0] = -HALF_HORIZON * DT -> [HHALF_HORIZON] = 0
-  auto yaw_pitch = aim(target, bullet_speed, armor_index);
+  auto yaw_pitch = aim(target, bullet_speed);
 
   for (int i = 0; i < HORIZON; i++) {
     target.predict(DT);
-    auto yaw_pitch_next = aim(target, bullet_speed, armor_index);
+    auto yaw_pitch_next = aim(target, bullet_speed);
 
     auto yaw_vel = tools::limit_rad(yaw_pitch_next(0) - yaw_pitch_last(0)) / (2 * DT);
     auto pitch_vel = (yaw_pitch_next(1) - yaw_pitch_last(1)) / (2 * DT);
