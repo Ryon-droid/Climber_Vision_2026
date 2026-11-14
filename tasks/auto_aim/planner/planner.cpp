@@ -21,6 +21,8 @@ Planner::Planner(const std::string & config_path)
   low_speed_delay_time_ = tools::read<double>(yaml, "low_speed_delay_time");
   air_resistance_k_ =
     yaml["air_resistance_k"] ? yaml["air_resistance_k"].as<double>() : 0.0;
+  fixed_armor_trajectory_ =
+    yaml["fixed_armor_trajectory"] ? yaml["fixed_armor_trajectory"].as<bool>() : false;
 
   setup_yaw_solver(config_path);
   setup_pitch_solver(config_path);
@@ -50,9 +52,23 @@ Plan Planner::plan(Target target, double bullet_speed)
   double yaw0;
   Trajectory traj;
   try {
-    yaw0 = aim(target, bullet_speed)(0);
+    int armor_index = -1;
+    const auto plates = target.armor_xyza_list();
+    if (fixed_armor_trajectory_ && plates.size() == 4) {
+      // Choose at impact time, then track that physical plate throughout this
+      // solve. Re-select on the next control cycle, never latch across targets.
+      double closest = 1e10;
+      for (int i = 0; i < static_cast<int>(plates.size()); ++i) {
+        const double distance = plates[i].head<2>().norm();
+        if (distance < closest) {
+          closest = distance;
+          armor_index = i;
+        }
+      }
+    }
+    yaw0 = aim(target, bullet_speed, armor_index)(0);
     const Eigen::Vector4d debug_xyza_at_hit = debug_xyza;
-    traj = get_trajectory(target, yaw0, bullet_speed);
+    traj = get_trajectory(target, yaw0, bullet_speed, armor_index);
     // get_trajectory 会在时域内多次调用 aim，恢复为击中时刻的调试点位用于可视化。
     debug_xyza = debug_xyza_at_hit;
   } catch (const std::exception & e) {
@@ -99,7 +115,8 @@ Plan Planner::plan(Target target, double bullet_speed)
   return plan;
 }
 
-Plan Planner::plan(std::optional<Target> target, double bullet_speed)
+Plan Planner::plan(std::optional<Target> target, double bullet_speed,
+  std::chrono::steady_clock::time_point now)
 {
   if (!target.has_value()) return {false};
 
@@ -107,7 +124,7 @@ Plan Planner::plan(std::optional<Target> target, double bullet_speed)
     std::abs(target->ekf_x()[7]) > decision_speed_ ? high_speed_delay_time_ : low_speed_delay_time_;
 
   // tools::logger()->debug("Delay time: {:.2f} ms", delay_time * 1e3);
-  auto future = std::chrono::steady_clock::now() + std::chrono::microseconds(int(delay_time * 1e6));
+  auto future = now + std::chrono::microseconds(int(delay_time * 1e6));
 
   target->predict(future);
 
@@ -164,18 +181,27 @@ void Planner::setup_pitch_solver(const std::string & config_path)
   pitch_solver_->settings->max_iter = 10;
 }
 
-Eigen::Matrix<double, 2, 1> Planner::aim(const Target & target, double bullet_speed)
+Eigen::Matrix<double, 2, 1> Planner::aim(
+  const Target & target, double bullet_speed, int armor_index)
 {
   Eigen::Vector3d xyz;
   double yaw;
   auto min_dist = 1e10;
 
-  for (auto & xyza : target.armor_xyza_list()) {
-    auto dist = xyza.head<2>().norm();
-    if (dist < min_dist) {
-      min_dist = dist;
-      xyz = xyza.head<3>();
-      yaw = xyza[3];
+  const auto plates = target.armor_xyza_list();
+  if (armor_index >= 0) {
+    const auto & xyza = plates.at(armor_index);
+    min_dist = xyza.head<2>().norm();
+    xyz = xyza.head<3>();
+    yaw = xyza[3];
+  } else {
+    for (const auto & xyza : plates) {
+      const auto dist = xyza.head<2>().norm();
+      if (dist < min_dist) {
+        min_dist = dist;
+        xyz = xyza.head<3>();
+        yaw = xyza[3];
+      }
     }
   }
   debug_xyza = Eigen::Vector4d(xyz.x(), xyz.y(), xyz.z(), yaw);
@@ -187,19 +213,20 @@ Eigen::Matrix<double, 2, 1> Planner::aim(const Target & target, double bullet_sp
   return {tools::limit_rad(azim + yaw_offset_), -bullet_traj.pitch - pitch_offset_};
 }
 
-Trajectory Planner::get_trajectory(Target & target, double yaw0, double bullet_speed)
+Trajectory Planner::get_trajectory(
+  Target & target, double yaw0, double bullet_speed, int armor_index)
 {
   Trajectory traj;
 
   target.predict(-DT * (HALF_HORIZON + 1));
-  auto yaw_pitch_last = aim(target, bullet_speed);
+  auto yaw_pitch_last = aim(target, bullet_speed, armor_index);
 
   target.predict(DT);  // [0] = -HALF_HORIZON * DT -> [HHALF_HORIZON] = 0
-  auto yaw_pitch = aim(target, bullet_speed);
+  auto yaw_pitch = aim(target, bullet_speed, armor_index);
 
   for (int i = 0; i < HORIZON; i++) {
     target.predict(DT);
-    auto yaw_pitch_next = aim(target, bullet_speed);
+    auto yaw_pitch_next = aim(target, bullet_speed, armor_index);
 
     auto yaw_vel = tools::limit_rad(yaw_pitch_next(0) - yaw_pitch_last(0)) / (2 * DT);
     auto pitch_vel = (yaw_pitch_next(1) - yaw_pitch_last(1)) / (2 * DT);

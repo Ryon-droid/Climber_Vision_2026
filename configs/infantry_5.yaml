@@ -46,6 +46,9 @@ leaving_angle: 25 # degree
 decision_speed: 8 # rad/s
 high_speed_delay_time: 0.01 # s
 low_speed_delay_time: 0.01 # s
+# Optional four-plate MPC trajectory, validated in the control simulator.
+# Keep disabled until the match's 30-round quota and hardware loop are verified.
+fixed_armor_trajectory: false
 
 #####-----shooter参数-----#####
 first_tolerance: 5 # 近距离射击容差，degree

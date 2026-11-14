@@ -38,7 +38,9 @@ public:
   Planner(const std::string & config_path);
 
   Plan plan(Target target, double bullet_speed);
-  Plan plan(std::optional<Target> target, double bullet_speed);
+  Plan plan(std::optional<Target> target, double bullet_speed,
+    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+  bool fixed_armor_trajectory_enabled() const { return fixed_armor_trajectory_; }
 
 private:
   double yaw_offset_;
@@ -46,6 +48,7 @@ private:
   double fire_thresh_;
   double low_speed_delay_time_, high_speed_delay_time_, decision_speed_;
   double air_resistance_k_ = 0.0;
+  bool fixed_armor_trajectory_ = false;
 
   TinySolver * yaw_solver_;
   TinySolver * pitch_solver_;
@@ -53,8 +56,9 @@ private:
   void setup_yaw_solver(const std::string & config_path);
   void setup_pitch_solver(const std::string & config_path);
 
-  Eigen::Matrix<double, 2, 1> aim(const Target & target, double bullet_speed);
-  Trajectory get_trajectory(Target & target, double yaw0, double bullet_speed);
+  Eigen::Matrix<double, 2, 1> aim(
+    const Target & target, double bullet_speed, int armor_index = -1);
+  Trajectory get_trajectory(Target & target, double yaw0, double bullet_speed, int armor_index);
 };
 
 }  // namespace auto_aim

@@ -61,7 +61,12 @@ int main(int argc, char * argv[])
       auto gs = gimbal.state();
       
       Plan plan;
-      if (target_opt.has_value()) {
+      if (planner.fixed_armor_trajectory_enabled() && target_opt &&
+          target_opt->armor_xyza_list().size() == 4) {
+        // The validated fixed-plate scheme includes observation age and command
+        // delay, as standard already does. Keep legacy timing when disabled.
+        plan = planner.plan(target_opt, gs.bullet_speed);
+      } else if (target_opt.has_value()) {
         plan = planner.plan(target_opt.value(), gs.bullet_speed);
       } else {
         // 没有目标时返回空计划
